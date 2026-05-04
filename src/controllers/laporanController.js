@@ -240,3 +240,127 @@ exports.stok = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// ============ KARTU STOK ============
+exports.kartuStok = async (req, res) => {
+  try {
+    const { idbarang, tglwal, tglakhir } = req.query;
+    const format = req.query.format || 'json';
+
+    let sql = `SELECT ks.*, b.kodebarang, b.namabarang, b.satuan
+      FROM kartustok ks
+      LEFT JOIN barang b ON ks.idbarang = b.idbarang
+      WHERE 1=1`;
+    const params = [];
+    if (idbarang) { sql += ' AND ks.idbarang = ?'; params.push(idbarang); }
+    if (tglwal) { sql += ' AND ks.tgltrans >= ?'; params.push(tglwal); }
+    if (tglakhir) { sql += ' AND ks.tgltrans <= ?'; params.push(tglakhir); }
+    sql += ' ORDER BY ks.tgltrans ASC, ks.idkartustok ASC';
+
+    const [rows] = await pool.query(sql, params);
+
+    if (format === 'html') {
+      const [user] = await pool.query('SELECT * FROM users LIMIT 1');
+      return res.render('laporan_kartu_stok', {
+        data: rows,
+        tglwal: tglwal || '-',
+        tglakhir: tglakhir || '-',
+        namatoko: user[0]?.namatoko || 'Grfyn POS',
+        alamat: user[0]?.alamat || '',
+        hp: user[0]?.hp || '',
+        logo: user[0]?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ============ STRUK ============
+exports.struk = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const format = req.query.format || 'json';
+
+    const [[jual]] = await pool.query(
+      `SELECT j.*, c.namacustomer, c.alamat as alamatcustomer, u.username as kasir
+       FROM jual j
+       LEFT JOIN customer c ON j.idcustomer = c.idcustomer
+       LEFT JOIN users u ON j.idkasir = u.iduser
+       WHERE j.idjual = ?`,
+      [id]
+    );
+    if (!jual) return res.status(404).json({ message: 'Transaksi tidak ditemukan' });
+
+    const [detail] = await pool.query(
+      `SELECT jd.*, b.namabarang, b.kodebarang, b.satuan
+       FROM jualdtl jd
+       LEFT JOIN barang b ON jd.idbarang = b.idbarang
+       WHERE jd.idjual = ?`,
+      [id]
+    );
+
+    if (format === 'html') {
+      const [user] = await pool.query('SELECT * FROM users LIMIT 1');
+      return res.render('struk', {
+        jual,
+        detail,
+        namatoko: user[0]?.namatoko || 'Grfyn POS',
+        alamat: user[0]?.alamat || '',
+        hp: user[0]?.hp || '',
+        logo: user[0]?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: jual, detail });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ============ FAKTUR ============
+exports.faktur = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const format = req.query.format || 'json';
+
+    const [[jual]] = await pool.query(
+      `SELECT j.*, c.namacustomer, c.alamat as alamatcustomer, c.hp as hpcustomer, u.username as kasir
+       FROM jual j
+       LEFT JOIN customer c ON j.idcustomer = c.idcustomer
+       LEFT JOIN users u ON j.idkasir = u.iduser
+       WHERE j.idjual = ?`,
+      [id]
+    );
+    if (!jual) return res.status(404).json({ message: 'Transaksi tidak ditemukan' });
+
+    const [detail] = await pool.query(
+      `SELECT jd.*, b.namabarang, b.kodebarang, b.satuan
+       FROM jualdtl jd
+       LEFT JOIN barang b ON jd.idbarang = b.idbarang
+       WHERE jd.idjual = ?`,
+      [id]
+    );
+
+    if (format === 'html') {
+      const [user] = await pool.query('SELECT * FROM users LIMIT 1');
+      return res.render('faktur', {
+        jual,
+        detail,
+        namatoko: user[0]?.namatoko || 'Grfyn POS',
+        alamat: user[0]?.alamat || '',
+        hp: user[0]?.hp || '',
+        logo: user[0]?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: jual, detail });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
