@@ -19,6 +19,8 @@ router.post('/saldoawal', auth, ctrl.createSaldoAwal);
 // Closing
 router.post('/closing', auth, ctrl.createClosing);
 router.get('/closing', auth, ctrl.getClosing);
+router.get('/closing/:id', auth, ctrl.getClosingDetail);
+router.put('/closing/:id/cancel', auth, ctrl.cancelClosing);
 
 // Get stok per barang
 router.get('/getstok/:idbarang', auth, ctrl.getStok);

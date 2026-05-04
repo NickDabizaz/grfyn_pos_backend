@@ -3,13 +3,14 @@ const pool = require('../config/db');
 // ============ KARTU STOK ============
 exports.getKartuStok = async (req, res) => {
   try {
-    const { idbarang, tglwal, tglakhir, jenis } = req.query;
+    const { idbarang, tglwal, tglakhir, jenis, search } = req.query;
     let sql = `SELECT ks.*, b.namabarang, b.satuankecil FROM kartustok ks LEFT JOIN barang b ON ks.idbarang = b.idbarang WHERE 1=1`;
     const params = [];
     if (idbarang) { sql += ' AND ks.idbarang = ?'; params.push(idbarang); }
     if (tglwal) { sql += ' AND ks.tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND ks.tgltrans <= ?'; params.push(tglakhir); }
     if (jenis) { sql += ' AND ks.jenis = ?'; params.push(jenis); }
+    if (search) { sql += ' AND ks.kodetrans LIKE ?'; params.push(`%${search}%`); }
     sql += ' ORDER BY ks.tgltrans DESC, ks.idkartustok DESC LIMIT 500';
     const [rows] = await pool.query(sql, params);
     res.json(rows);
@@ -21,8 +22,13 @@ exports.getKartuStok = async (req, res) => {
 // ============ PENYESUAIAN STOK ============
 exports.getPenyesuaian = async (req, res) => {
   try {
-    const [rows] = await pool.query(`SELECT ps.*, u.username as kasir
-      FROM penyesuaianstok ps LEFT JOIN users u ON ps.idkasir = u.iduser ORDER BY ps.tgltrans DESC, ps.idpenyesuaianstok DESC`);
+    const { search } = req.query;
+    let sql = `SELECT ps.*, u.username as kasir
+      FROM penyesuaianstok ps LEFT JOIN users u ON ps.idkasir = u.iduser WHERE 1=1`;
+    const params = [];
+    if (search) { sql += ' AND ps.kodepenyesuaianstok LIKE ?'; params.push(`%${search}%`); }
+    sql += ' ORDER BY ps.tgltrans DESC, ps.idpenyesuaianstok DESC';
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -44,15 +50,15 @@ exports.createPenyesuaian = async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const { idkasir, keterangan, items } = req.body;
+    const { idkasir, keterangan, items, tgltrans: tglInput } = req.body;
 
     if (!items || !items.length) return res.status(400).json({ message: 'Items tidak boleh kosong' });
 
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const tgltrans = tglInput || new Date().toISOString().slice(0, 10);
+    const dateStr = tgltrans.replace(/-/g, '');
     const [[{ cnt }]] = await conn.query(`SELECT COUNT(*) as cnt FROM penyesuaianstok WHERE kodepenyesuaianstok LIKE ?`, [`PNS-${dateStr}-%`]);
     const num = String(cnt + 1).padStart(4, '0');
     const kode = `PNS-${dateStr}-${num}`;
-    const tgltrans = new Date().toISOString().slice(0, 10);
 
     await conn.query(
       'INSERT INTO penyesuaianstok (kodepenyesuaianstok, tgltrans, idkasir, keterangan) VALUES (?, ?, ?, ?)',
@@ -190,44 +196,144 @@ exports.getSaldoStokDetail = async (req, res) => {
 };
 
 // ============ CLOSING ============
+function getPeriodDates(jenis, rawValue) {
+  // rawValue: 'YYYY-MM-DD' for harian, 'YYYY-MM' for bulanan
+  if (jenis === 'HARIAN') {
+    return { start: rawValue, end: rawValue };
+  }
+  // BULANAN
+  const [y, m] = rawValue.split('-');
+  const start = `${y}-${m}-01`;
+  const end = new Date(parseInt(y), parseInt(m), 0).toISOString().slice(0, 10);
+  return { start, end };
+}
+
 exports.createClosing = async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const { jenis, tglclosing } = req.body; // 'harian' or 'bulanan'
+    const { jenis, periode } = req.body; // jenis: 'HARIAN' | 'BULANAN', periode: 'YYYY-MM-DD' | 'YYYY-MM'
 
-    const dateStr = tglclosing.replace(/-/g, '');
-    const [[{ cnt }]] = await conn.query(`SELECT COUNT(*) as cnt FROM closing WHERE kodeclosing LIKE ?`, [`CLS-${dateStr}-%`]);
-    const num = String(cnt + 1).padStart(4, '0');
-    const kodeclosing = `CLS-${dateStr}-${num}`;
+    if (!jenis || !periode) {
+      return res.status(400).json({ message: 'Jenis dan periode wajib diisi' });
+    }
 
-    await conn.query('INSERT INTO closing (kodeclosing, tglclosing, jenis) VALUES (?, ?, ?)',
-      [kodeclosing, tglclosing, jenis]);
+    const { start, end } = getPeriodDates(jenis, periode);
 
-    // Generate saldostok baru
-    const [[{ cnt: cntSaldo }]] = await conn.query(`SELECT COUNT(*) as cnt FROM saldostok WHERE kodesaldostok LIKE ?`, [`SD-${dateStr}-%`]);
-    const numSaldo = String(cntSaldo + 1).padStart(4, '0');
-    const kodeSaldo = `SD-${dateStr}-${numSaldo}`;
+    // 1. Cek apakah sudah ada closing untuk periode yang sama
+    const [[existing]] = await conn.query(
+      `SELECT COUNT(*) as cnt FROM closing 
+       WHERE status = 1 AND jenis = ? AND periode_start = ? AND periode_end = ?`,
+      [jenis, start, end]
+    );
+    if (existing.cnt > 0) {
+      return res.status(400).json({ message: `Closing ${jenis} untuk periode ini sudah ada` });
+    }
 
-    await conn.query('INSERT INTO saldostok (kodesaldostok, tgltrans, keterangan) VALUES (?, ?, ?)',
-      [kodeSaldo, tglclosing, 'SALDO DARI HITUNG HPP']);
+    // 2. Cek apakah ada transaksi jual di periode ini
+    const [[transaksi]] = await conn.query(
+      `SELECT COUNT(*) as cnt FROM jual WHERE status = 1 AND tgltrans >= ? AND tgltrans <= ?`,
+      [start, end]
+    );
+    if (transaksi.cnt === 0) {
+      return res.status(400).json({ message: 'Tidak ada transaksi penjualan di periode ini' });
+    }
 
-    const [[saldoHeader]] = await conn.query('SELECT idsaldostok FROM saldostok WHERE kodesaldostok = ?', [kodeSaldo]);
-
-    // Get all barang with stock
-    const [allBarang] = await conn.query('SELECT DISTINCT idbarang FROM kartustok');
-    for (const b of allBarang) {
-      const [[m]] = await conn.query('SELECT COALESCE(SUM(jml), 0) as total FROM kartustok WHERE idbarang = ? AND jenis = ?', [b.idbarang, 'M']);
-      const [[k]] = await conn.query('SELECT COALESCE(SUM(jml), 0) as total FROM kartustok WHERE idbarang = ? AND jenis = ?', [b.idbarang, 'K']);
-      const saldoAkhir = m.total - k.total;
-      if (saldoAkhir > 0) {
-        await conn.query('INSERT INTO saldostokdtl (idsaldostok, kodesaldostok, idbarang, jml) VALUES (?, ?, ?, ?)',
-          [saldoHeader.idsaldostok, kodeSaldo, b.idbarang, saldoAkhir]);
+    // 3. Cek apakah ada closing lain yang mencakup periode ini (konflik)
+    const [[conflict]] = await conn.query(
+      `SELECT COUNT(*) as cnt FROM closing 
+       WHERE status = 1 AND (
+         (periode_start <= ? AND periode_end >= ?) OR
+         (periode_start <= ? AND periode_end >= ?)
+       )`,
+      [end, start, end, start]
+    );
+    // Untuk harian: cek apakah ada closing bulanan yang mencakup tanggal ini
+    // Untuk bulanan: cek apakah ada closing harian di dalam bulan ini
+    if (jenis === 'HARIAN') {
+      const [[conflictBulanan]] = await conn.query(
+        `SELECT COUNT(*) as cnt FROM closing WHERE status = 1 AND jenis = 'BULANAN' AND periode_start <= ? AND periode_end >= ?`,
+        [end, start]
+      );
+      if (conflictBulanan.cnt > 0) {
+        return res.status(400).json({ message: 'Tanggal ini sudah masuk dalam closing bulanan' });
+      }
+    } else {
+      const [[conflictHarian]] = await conn.query(
+        `SELECT COUNT(*) as cnt FROM closing WHERE status = 1 AND jenis = 'HARIAN' AND periode_start >= ? AND periode_end <= ?`,
+        [start, end]
+      );
+      if (conflictHarian.cnt > 0) {
+        return res.status(400).json({ message: 'Ada closing harian di dalam bulan ini, batalkan terlebih dahulu' });
       }
     }
 
+    // 4. Validasi: apakah ada transaksi sebelum periode ini yang belum diclosing?
+    const [[unclosed]] = await conn.query(
+      `SELECT DISTINCT j.tgltrans as tgl
+       FROM jual j
+       WHERE j.status = 1 AND j.tgltrans < ?
+       AND NOT EXISTS (
+         SELECT 1 FROM closing c
+         WHERE c.status = 1 AND c.periode_start <= j.tgltrans AND c.periode_end >= j.tgltrans
+       )
+       LIMIT 1`,
+      [start]
+    );
+    if (unclosed) {
+      return res.status(400).json({ message: `Harap closing periode sebelumnya terlebih dahulu (ada transaksi tanggal ${unclosed.tgl} yang belum closing)` });
+    }
+
+    // 5. Generate kode closing
+    const datePrefix = jenis === 'HARIAN' ? periode.replace(/-/g, '') : periode.replace(/-/g, '');
+    const prefix = jenis === 'HARIAN' ? `CLS-H-${datePrefix}` : `CLS-B-${datePrefix}`;
+    const [[{ cnt }]] = await conn.query(`SELECT COUNT(*) as cnt FROM closing WHERE kodeclosing LIKE ?`, [`${prefix}-%`]);
+    const num = String(cnt + 1).padStart(4, '0');
+    const kodeclosing = `${prefix}-${num}`;
+    const tglclosing = new Date().toISOString().slice(0, 10);
+
+    // 6. Insert closing
+    await conn.query(
+      'INSERT INTO closing (kodeclosing, tglclosing, periode_start, periode_end, jenis) VALUES (?, ?, ?, ?, ?)',
+      [kodeclosing, tglclosing, start, end, jenis]
+    );
+    const [[header]] = await conn.query('SELECT idclosing FROM closing WHERE kodeclosing = ?', [kodeclosing]);
+
+    // 7. Hitung total keluar per barang dari t_jual
+    const [barangKeluar] = await conn.query(
+      `SELECT jd.idbarang, SUM(jd.jml) as total
+       FROM jual j
+       JOIN jualdtl jd ON j.idjual = jd.idjual
+       WHERE j.status = 1 AND j.tgltrans >= ? AND j.tgltrans <= ?
+       GROUP BY jd.idbarang`,
+      [start, end]
+    );
+
+    // 8. Insert closingdtl
+    for (const row of barangKeluar) {
+      await conn.query(
+        'INSERT INTO closingdtl (idclosing, idbarang, jml) VALUES (?, ?, ?)',
+        [header.idclosing, row.idbarang, row.total]
+      );
+    }
+
+    // 9. Hapus kartustok per-transaksi (jenisref='jual') di periode ini
+    await conn.query(
+      `DELETE FROM kartustok WHERE jenisref = 'jual' AND tgltrans >= ? AND tgltrans <= ?`,
+      [start, end]
+    );
+
+    // 10. Insert kartustok summary closing
+    for (const row of barangKeluar) {
+      await conn.query(
+        `INSERT INTO kartustok (kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idref, jenisref)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [kodeclosing, row.idbarang, row.total, 'K', end, `Closing ${jenis} ${kodeclosing}`, header.idclosing, jenis === 'HARIAN' ? 'closing_harian' : 'closing_bulanan']
+      );
+    }
+
     await conn.commit();
-    res.status(201).json({ message: 'Closing berhasil', kodeclosing });
+    res.status(201).json({ message: `Closing ${jenis} berhasil`, kodeclosing });
   } catch (err) {
     await conn.rollback();
     res.status(500).json({ message: err.message });
@@ -236,20 +342,93 @@ exports.createClosing = async (req, res) => {
   }
 };
 
+exports.cancelClosing = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[closing]] = await conn.query('SELECT * FROM closing WHERE idclosing = ?', [id]);
+    if (!closing) return res.status(404).json({ message: 'Closing tidak ditemukan' });
+    if (closing.status === 0) return res.status(400).json({ message: 'Closing sudah dibatalkan' });
+
+    const jenisref = closing.jenis === 'HARIAN' ? 'closing_harian' : 'closing_bulanan';
+
+    // 1. Hapus kartustok summary closing
+    await conn.query(
+      `DELETE FROM kartustok WHERE jenisref = ? AND idref = ?`,
+      [jenisref, id]
+    );
+
+    // 2. Re-generate kartustok dari t_jual per transaksi asli
+    const [juals] = await conn.query(
+      `SELECT j.idjual, j.kodejual, j.tgltrans FROM jual j
+       WHERE j.status = 1 AND j.tgltrans >= ? AND j.tgltrans <= ?`,
+      [closing.periode_start, closing.periode_end]
+    );
+
+    for (const j of juals) {
+      const [details] = await conn.query(
+        `SELECT idbarang, jml FROM jualdtl WHERE idjual = ?`,
+        [j.idjual]
+      );
+      for (const d of details) {
+        await conn.query(
+          `INSERT INTO kartustok (kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idref, jenisref)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [j.kodejual, d.idbarang, d.jml, 'K', j.tgltrans, `Penjualan ${j.kodejual}`, j.idjual, 'jual']
+        );
+      }
+    }
+
+    // 3. Nonaktifkan closing
+    await conn.query('UPDATE closing SET status = 0 WHERE idclosing = ?', [id]);
+
+    // closingdtl dibiarkan untuk history
+
+    await conn.commit();
+    res.json({ message: `Closing ${closing.kodeclosing} berhasil dibatalkan` });
+  } catch (err) {
+    await conn.rollback();
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.getClosingDetail = async (req, res) => {
+  try {
+    const [header] = await pool.query('SELECT * FROM closing WHERE idclosing = ?', [req.params.id]);
+    if (header.length === 0) return res.status(404).json({ message: 'Closing tidak ditemukan' });
+
+    const [items] = await pool.query(
+      `SELECT cd.*, b.kodebarang, b.namabarang, b.satuankecil
+       FROM closingdtl cd
+       LEFT JOIN barang b ON cd.idbarang = b.idbarang
+       WHERE cd.idclosing = ?`,
+      [req.params.id]
+    );
+
+    res.json({ ...header[0], items });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ============ SALDO AWAL STOK ============
 exports.createSaldoAwal = async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const { idkasir, keterangan, items } = req.body;
+    const { idkasir, keterangan, items, tgltrans: tglInput } = req.body;
 
     if (!items || !items.length) return res.status(400).json({ message: 'Items tidak boleh kosong' });
 
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const tgltrans = tglInput || new Date().toISOString().slice(0, 10);
+    const dateStr = tgltrans.replace(/-/g, '');
     const [[{ cnt }]] = await conn.query('SELECT COUNT(*) as cnt FROM saldostok WHERE kodesaldostok LIKE ?', [`SA-${dateStr}-%`]);
     const num = String(cnt + 1).padStart(4, '0');
     const kodeSaldo = `SA-${dateStr}-${num}`;
-    const tgltrans = new Date().toISOString().slice(0, 10);
 
     await conn.query(
       'INSERT INTO saldostok (kodesaldostok, tgltrans, keterangan) VALUES (?, ?, ?)',
@@ -287,7 +466,7 @@ exports.getClosing = async (req, res) => {
     let sql = 'SELECT * FROM closing WHERE 1=1';
     const params = [];
     if (jenis) { sql += ' AND jenis = ?'; params.push(jenis); }
-    sql += ' ORDER BY tglclosing DESC, idclosing DESC LIMIT 50';
+    sql += ' ORDER BY periode_end DESC, idclosing DESC LIMIT 50';
     const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
