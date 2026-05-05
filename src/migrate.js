@@ -18,14 +18,10 @@ async function migrate() {
 
   // Drop tables in reverse dependency order
   const tables = [
-    'produksidtl', 'produksi',
-    'hitunghppdtl', 'hitunghpp',
-    'closingdtl', 'closing', 'kartustok', 'saldostokdtl', 'saldostok',
-    'saldoawaldtl', 'saldoawal',
+    'kartustok', 'saldoawaldtl', 'saldoawal',
     'penyesuaianstokdtl', 'penyesuaianstok',
     'belidtl', 'beli', 'jualdtl', 'jual',
     'hargajual', 'hargabeli',
-    'resepdtl', 'resep',
     'kasdtl', 'kas', 'jurnal',
     'barang', 'supplier', 'customer', 'akun', 'users'
   ];
@@ -83,7 +79,7 @@ async function migrate() {
       satuankecil VARCHAR(20),
       konversi1 INT DEFAULT 0,
       konversi2 INT DEFAULT 0,
-      jenis ENUM('BAHAN BAKU', 'BAHAN JADI') DEFAULT 'BAHAN JADI',
+      jenis ENUM('BAHAN BAKU', 'BAHAN SETENGAH JADI', 'BAHAN JADI') DEFAULT 'BAHAN JADI',
       stokmin INT DEFAULT 0,
       status INT DEFAULT 1
     ) ENGINE=InnoDB
@@ -123,6 +119,7 @@ async function migrate() {
       bayar DECIMAL(15,2) DEFAULT 0,
       kembali DECIMAL(15,2) DEFAULT 0,
       jenis ENUM('POS','JUAL') DEFAULT 'POS',
+      metode_bayar ENUM('TUNAI','NON TUNAI') DEFAULT 'TUNAI',
       status INT DEFAULT 1,
       FOREIGN KEY (idcustomer) REFERENCES customer(idcustomer),
       FOREIGN KEY (idkasir) REFERENCES users(iduser)
@@ -207,31 +204,7 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
-  // 13. saldostok
-  await connection.query(`
-    CREATE TABLE saldostok (
-      idsaldostok INT AUTO_INCREMENT PRIMARY KEY,
-      kodesaldostok VARCHAR(30) NOT NULL UNIQUE,
-      tgltrans DATE NOT NULL,
-      keterangan VARCHAR(200),
-      status INT DEFAULT 1
-    ) ENGINE=InnoDB
-  `);
-
-  // 14. saldostokdtl
-  await connection.query(`
-    CREATE TABLE saldostokdtl (
-      idsaldostokdtl INT AUTO_INCREMENT PRIMARY KEY,
-      idsaldostok INT NOT NULL,
-      kodesaldostok VARCHAR(30),
-      idbarang INT,
-      jml INT NOT NULL,
-      FOREIGN KEY (idsaldostok) REFERENCES saldostok(idsaldostok) ON DELETE CASCADE,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
-    ) ENGINE=InnoDB
-  `);
-
-  // 15. kartustok
+  // 13. kartustok
   await connection.query(`
     CREATE TABLE kartustok (
       idkartustok INT AUTO_INCREMENT PRIMARY KEY,
@@ -247,143 +220,7 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
-  // 16. closing
-  await connection.query(`
-    CREATE TABLE closing (
-      idclosing INT AUTO_INCREMENT PRIMARY KEY,
-      kodeclosing VARCHAR(30) NOT NULL UNIQUE,
-      tglclosing DATE NOT NULL,
-      periode_start DATE NOT NULL,
-      periode_end DATE NOT NULL,
-      jenis ENUM('HARIAN', 'BULANAN') NOT NULL,
-      status INT DEFAULT 1,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB
-  `);
-
-  // 16b. closing detail
-  await connection.query(`
-    CREATE TABLE closingdtl (
-      idclosingdtl INT AUTO_INCREMENT PRIMARY KEY,
-      idclosing INT NOT NULL,
-      idbarang INT NOT NULL,
-      jml INT NOT NULL,
-      FOREIGN KEY (idclosing) REFERENCES closing(idclosing) ON DELETE CASCADE,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
-    ) ENGINE=InnoDB
-  `);
-
-  // 17. hitunghpp
-  await connection.query(`
-    CREATE TABLE hitunghpp (
-      idhitunghpp INT AUTO_INCREMENT PRIMARY KEY,
-      kodehitunghpp VARCHAR(30) NOT NULL UNIQUE,
-      tgltrans DATE NOT NULL,
-      periode_bulan VARCHAR(7) NOT NULL,
-      periode_dari DATE NOT NULL,
-      periode_sampai DATE NOT NULL,
-      keterangan TEXT,
-      iduser INT,
-      status INT DEFAULT 1,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (iduser) REFERENCES users(iduser)
-    ) ENGINE=InnoDB
-  `);
-
-  // 18. hitunghppdtl
-  await connection.query(`
-    CREATE TABLE hitunghppdtl (
-      idhitunghppdtl INT AUTO_INCREMENT PRIMARY KEY,
-      idhitunghpp INT NOT NULL,
-      kodehitunghpp VARCHAR(30),
-      idbarang INT NOT NULL,
-      saldo_awal_qty DECIMAL(15,2) DEFAULT 0,
-      saldo_awal_hpp DECIMAL(15,2) DEFAULT 0,
-      pembelian_qty DECIMAL(15,2) DEFAULT 0,
-      pembelian_total DECIMAL(15,2) DEFAULT 0,
-      produksi_qty DECIMAL(15,2) DEFAULT 0,
-      produksi_total DECIMAL(15,2) DEFAULT 0,
-      penyesuaian_qty DECIMAL(15,2) DEFAULT 0,
-      penyesuaian_total DECIMAL(15,2) DEFAULT 0,
-      penjualan_qty DECIMAL(15,2) DEFAULT 0,
-      penjualan_hpp DECIMAL(15,2) DEFAULT 0,
-      saldo_akhir_qty DECIMAL(15,2) DEFAULT 0,
-      saldo_akhir_hpp DECIMAL(15,2) DEFAULT 0,
-      hpp_per_unit DECIMAL(15,2) DEFAULT 0,
-      FOREIGN KEY (idhitunghpp) REFERENCES hitunghpp(idhitunghpp) ON DELETE CASCADE,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
-    ) ENGINE=InnoDB
-  `);
-
-  // 19. resep
-  await connection.query(`
-    CREATE TABLE resep (
-      idresep INT AUTO_INCREMENT PRIMARY KEY,
-      koderesep VARCHAR(30) NOT NULL UNIQUE,
-      idbarang INT NOT NULL,
-      hasiljml DECIMAL(15,2) DEFAULT 0,
-      hasilsatuan VARCHAR(20),
-      status INT DEFAULT 1,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
-    ) ENGINE=InnoDB
-  `);
-
-  // 18. resepdtl
-  await connection.query(`
-    CREATE TABLE resepdtl (
-      idresepdtl INT AUTO_INCREMENT PRIMARY KEY,
-      idresep INT NOT NULL,
-      koderesep VARCHAR(30),
-      idbarang INT NOT NULL,
-      jml DECIMAL(15,2) NOT NULL,
-      satuan VARCHAR(20),
-      harga DECIMAL(15,2) DEFAULT 0,
-      subtotal DECIMAL(15,2) DEFAULT 0,
-      FOREIGN KEY (idresep) REFERENCES resep(idresep) ON DELETE CASCADE,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
-    ) ENGINE=InnoDB
-  `);
-
-  // 19. produksi
-  await connection.query(`
-    CREATE TABLE produksi (
-      idproduksi INT AUTO_INCREMENT PRIMARY KEY,
-      kodeproduksi VARCHAR(30) NOT NULL UNIQUE,
-      idresep INT,
-      idbarang INT NOT NULL,
-      tgltrans DATE NOT NULL,
-      qtyhasil DECIMAL(15,2) NOT NULL DEFAULT 0,
-      satuanhasil VARCHAR(20),
-      biayatk DECIMAL(15,2) DEFAULT 0,
-      biayaoverhead DECIMAL(15,2) DEFAULT 0,
-      totalhpp DECIMAL(15,2) DEFAULT 0,
-      hppperunit DECIMAL(15,2) DEFAULT 0,
-      keterangan TEXT,
-      iduser INT,
-      status INT DEFAULT 1,
-      FOREIGN KEY (idresep) REFERENCES resep(idresep) ON DELETE SET NULL,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
-      FOREIGN KEY (iduser) REFERENCES users(iduser)
-    ) ENGINE=InnoDB
-  `);
-
-  // 20. produksidtl
-  await connection.query(`
-    CREATE TABLE produksidtl (
-      idproduksidtl INT AUTO_INCREMENT PRIMARY KEY,
-      idproduksi INT NOT NULL,
-      kodeproduksi VARCHAR(30),
-      idbarang INT NOT NULL,
-      jml DECIMAL(15,2) NOT NULL DEFAULT 0,
-      satuan VARCHAR(20),
-      harga DECIMAL(15,2) DEFAULT 0,
-      subtotal DECIMAL(15,2) DEFAULT 0,
-      FOREIGN KEY (idproduksi) REFERENCES produksi(idproduksi) ON DELETE CASCADE,
-      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
-    ) ENGINE=InnoDB
-  `);
-
-  // 21. akun
+  // 14. akun
   await connection.query(`
     CREATE TABLE akun (
       idakun INT AUTO_INCREMENT PRIMARY KEY,
@@ -396,7 +233,7 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
-  // 22. kas
+  // 15. kas
   await connection.query(`
     CREATE TABLE kas (
       idkas INT AUTO_INCREMENT PRIMARY KEY,
@@ -408,7 +245,7 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
-  // 23. kasdtl
+  // 16. kasdtl
   await connection.query(`
     CREATE TABLE kasdtl (
       idkasdtl INT AUTO_INCREMENT PRIMARY KEY,
@@ -422,7 +259,7 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
-  // 22. jurnal
+  // 17. jurnal
   await connection.query(`
     CREATE TABLE jurnal (
       idjurnal INT AUTO_INCREMENT PRIMARY KEY,
@@ -442,12 +279,8 @@ async function migrate() {
   await connection.query(`CREATE INDEX idx_kartustok_tgl ON kartustok(tgltrans)`);
   await connection.query(`CREATE INDEX idx_jual_tgl ON jual(tgltrans)`);
   await connection.query(`CREATE INDEX idx_beli_tgl ON beli(tgltrans)`);
-  await connection.query(`CREATE INDEX idx_saldostok_tgl ON saldostok(tgltrans)`);
   await connection.query(`CREATE INDEX idx_hargabeli_barang ON hargabeli(idbarang, tgltrans DESC)`);
   await connection.query(`CREATE INDEX idx_hargajual_barang ON hargajual(idbarang, tgltrans DESC)`);
-  await connection.query(`CREATE INDEX idx_hitunghpp_bulan ON hitunghpp(periode_bulan)`);
-  await connection.query(`CREATE INDEX idx_hitunghppdtl_header ON hitunghppdtl(idhitunghpp)`);
-  await connection.query(`CREATE INDEX idx_hitunghppdtl_barang ON hitunghppdtl(idbarang)`);
 
   console.log('All tables created');
 
