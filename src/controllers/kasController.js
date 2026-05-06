@@ -1,13 +1,16 @@
-const pool = require('../config/db');
+const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../config/db');
+const { generateKodeKas } = require('../lib/kodetrans');
 
 exports.getAll = async (req, res) => {
   try {
+    const ctx = getTenantContext();
     const { search } = req.query;
-    let sql = 'SELECT k.*, u.username FROM kas k JOIN users u ON k.iduser = u.iduser WHERE 1=1';
+    let sql = 'SELECT k.* FROM kas k WHERE 1=1';
     const params = [];
+    sql += ' AND k.idlokasi = ?'; params.push(ctx.idlokasi);
     if (search) { sql += ' AND k.kodekas LIKE ?'; params.push(`%${search}%`); }
     sql += ' ORDER BY k.idkas DESC';
-    const [rows] = await pool.query(sql, params);
+    const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -16,11 +19,12 @@ exports.getAll = async (req, res) => {
 
 exports.getOne = async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT k.*, u.username FROM kas k JOIN users u ON k.iduser = u.iduser WHERE k.idkas = ?', [req.params.id]);
+    const ctx = getTenantContext();
+    const rows = await tenantQuery('SELECT k.* FROM kas k WHERE k.idkas = ? AND k.idlokasi = ?', [req.params.id, ctx.idlokasi]);
     if (rows.length === 0) return res.status(404).json({ message: 'Kas tidak ditemukan' });
 
-    const [details] = await pool.query(
-      'SELECT kd.*, a.kodeakun, a.namaakun, a.posisi FROM kasdtl kd JOIN akun a ON kd.idakun = a.idakun WHERE kd.idkas = ?',
+    const details = await tenantQuery(
+      'SELECT kd.*, a.kodeakun, a.namaakun FROM kasdtl kd JOIN akun a ON kd.idakun = a.idakun AND a.idtenant = kd.idtenant WHERE kd.idkas = ?',
       [req.params.id]
     );
 
@@ -31,35 +35,33 @@ exports.getOne = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
+    const ctx = getTenantContext();
     await conn.beginTransaction();
     const { details } = req.body;
 
-    const [[{ maxKode }]] = await conn.query('SELECT MAX(kodekas) as maxKode FROM kas');
-    let num = 1;
-    if (maxKode) { const parts = maxKode.split('-'); num = parseInt(parts[1]) + 1; }
-    const kodekas = `KAS-${String(num).padStart(4, '0')}`;
-
+    const kodekas = await generateKodeKas(conn, ctx.idtenant, ctx.idlokasi);
     const tgltrans = new Date().toISOString().slice(0, 10);
 
     const [result] = await conn.query(
-      'INSERT INTO kas (kodekas, tgltrans, iduser) VALUES (?, ?, ?)',
-      [kodekas, tgltrans, req.user.iduser]
+      'INSERT INTO kas (idtenant, idlokasi, kodekas, tgltrans, iduser, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [ctx.idtenant, ctx.idlokasi, kodekas, tgltrans, ctx.iduser, 'AKTIF', ctx.iduser]
     );
     const idkas = result.insertId;
 
     for (const d of details) {
       await conn.query(
-        'INSERT INTO kasdtl (idkas, kodekas, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)',
-        [idkas, kodekas, d.idakun, d.catatan || '', d.amount]
+        'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)',
+        [idkas, ctx.idtenant, d.idakun, d.catatan || '', d.amount]
       );
 
-      const [[akun]] = await conn.query('SELECT posisi FROM akun WHERE idakun = ?', [d.idakun]);
+      const [[akun]] = await conn.query('SELECT namaakun FROM akun WHERE idakun = ? AND idtenant = ?', [d.idakun, ctx.idtenant]);
+      const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
 
       await conn.query(
-        'INSERT INTO jurnal (idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?)',
-        [idkas, kodekas, 'kas', d.idakun, akun.posisi, d.amount]
+        'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [ctx.idtenant, ctx.idlokasi, idkas, kodekas, 'kas', d.idakun, posisi, Math.abs(d.amount)]
       );
     }
 
@@ -74,30 +76,31 @@ exports.create = async (req, res) => {
 };
 
 exports.update = async (req, res) => {
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
+    const ctx = getTenantContext();
     await conn.beginTransaction();
     const { details } = req.body;
     const { id } = req.params;
 
-    const [rows] = await conn.query('SELECT * FROM kas WHERE idkas = ?', [id]);
+    const [rows] = await conn.query('SELECT * FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?', [id, ctx.idtenant, ctx.idlokasi]);
     if (rows.length === 0) return res.status(404).json({ message: 'Kas tidak ditemukan' });
 
-    await conn.query('DELETE FROM jurnal WHERE jenis = ? AND idtrans = ?', ['kas', id]);
-
-    await conn.query('DELETE FROM kasdtl WHERE idkas = ?', [id]);
+    await conn.query("DELETE FROM jurnal WHERE jenis = ? AND idtrans = ? AND idtenant = ? AND idlokasi = ?", ['kas', id, ctx.idtenant, ctx.idlokasi]);
+    await conn.query('DELETE FROM kasdtl WHERE idkas = ? AND idtenant = ?', [id, ctx.idtenant]);
 
     for (const d of details) {
       await conn.query(
-        'INSERT INTO kasdtl (idkas, kodekas, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)',
-        [id, rows[0].kodekas, d.idakun, d.catatan || '', d.amount]
+        'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)',
+        [id, ctx.idtenant, d.idakun, d.catatan || '', d.amount]
       );
 
-      const [[akun]] = await conn.query('SELECT posisi FROM akun WHERE idakun = ?', [d.idakun]);
+      const [[akun]] = await conn.query('SELECT namaakun FROM akun WHERE idakun = ? AND idtenant = ?', [d.idakun, ctx.idtenant]);
+      const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
 
       await conn.query(
-        'INSERT INTO jurnal (idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?)',
-        [id, rows[0].kodekas, 'kas', d.idakun, akun.posisi, d.amount]
+        'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [ctx.idtenant, ctx.idlokasi, id, rows[0].kodekas, 'kas', d.idakun, posisi, Math.abs(d.amount)]
       );
     }
 
@@ -112,11 +115,15 @@ exports.update = async (req, res) => {
 };
 
 exports.remove = async (req, res) => {
+  const conn = await getConnection();
   try {
-    await pool.query('DELETE FROM jurnal WHERE jenis = ? AND idtrans = ?', ['kas', req.params.id]);
-    await pool.query('DELETE FROM kas WHERE idkas = ?', [req.params.id]);
+    const ctx = getTenantContext();
+    await conn.query("DELETE FROM jurnal WHERE jenis = ? AND idtrans = ? AND idtenant = ? AND idlokasi = ?", ['kas', req.params.id, ctx.idtenant, ctx.idlokasi]);
+    await conn.query('DELETE FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?', [req.params.id, ctx.idtenant, ctx.idlokasi]);
     res.json({ message: 'Kas berhasil dihapus' });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
   }
 };

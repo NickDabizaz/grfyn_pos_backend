@@ -1,4 +1,5 @@
-const pool = require('../config/db');
+const { tenantQuery, tenantExecute, getTenantContext } = require('../config/db');
+const { generateKodeMaster } = require('../lib/kodetrans');
 
 exports.getAll = async (req, res) => {
   try {
@@ -7,7 +8,7 @@ exports.getAll = async (req, res) => {
     const params = [];
     if (search) { sql += ' AND (namacustomer LIKE ? OR kodecustomer LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
     sql += ' ORDER BY idcustomer ASC';
-    const [rows] = await pool.query(sql, params);
+    const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -16,14 +17,14 @@ exports.getAll = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
+    const ctx                          = getTenantContext();
     const { namacustomer, alamat, hp } = req.body;
-    const [[{ maxKode }]] = await pool.query('SELECT MAX(kodecustomer) as maxKode FROM customer');
-    let num = 1;
-    if (maxKode) { const parts = maxKode.split('-'); num = parseInt(parts[1]) + 1; }
-    const kodecustomer = `CST-${String(num).padStart(4, '0')}`;
-    const [result] = await pool.query('INSERT INTO customer (kodecustomer, namacustomer, alamat, hp) VALUES (?, ?, ?, ?)',
-      [kodecustomer, namacustomer, alamat || '', hp || '']);
-    res.status(201).json({ message: 'Customer berhasil ditambah', idcustomer: result.insertId, kodecustomer });
+    const kodecustomer                 = await generateKodeMaster(await require('../config/db').getConnection(), 'CST', ctx.idtenant, 'customer', 'kodecustomer', 4);
+    await tenantExecute(
+      'INSERT INTO customer (idtenant, kodecustomer, namacustomer, alamat, hp, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [ctx.idtenant, kodecustomer, namacustomer, alamat || '', hp || '', 'AKTIF', ctx.iduser]
+    );
+    res.status(201).json({ message: 'Customer berhasil ditambah', kodecustomer });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -31,9 +32,10 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
+    const ctx = getTenantContext();
     const { namacustomer, alamat, hp } = req.body;
-    await pool.query('UPDATE customer SET namacustomer = ?, alamat = ?, hp = ? WHERE idcustomer = ?',
-      [namacustomer, alamat, hp, req.params.id]);
+    await tenantExecute('UPDATE customer SET namacustomer = ?, alamat = ?, hp = ? WHERE idcustomer = ? AND idtenant = ?',
+      [namacustomer, alamat, hp, req.params.id, ctx.idtenant]);
     res.json({ message: 'Customer berhasil diupdate' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -42,7 +44,14 @@ exports.update = async (req, res) => {
 
 exports.remove = async (req, res) => {
   try {
-    await pool.query('DELETE FROM customer WHERE idcustomer = ? AND kodecustomer != ?', [req.params.id, 'CST-0001']);
+    const ctx = getTenantContext();
+    const conn = await require('../config/db').getConnection();
+    const [[{ cnt }]] = await conn.query('SELECT COUNT(*) as cnt FROM jual WHERE idcustomer = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
+    conn.release();
+    if (cnt > 0) {
+      return res.status(400).json({ message: 'Customer sudah digunakan di transaksi. Nonaktifkan saja.' });
+    }
+    await tenantExecute('DELETE FROM customer WHERE idcustomer = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
     res.json({ message: 'Customer berhasil dihapus' });
   } catch (err) {
     res.status(500).json({ message: err.message });

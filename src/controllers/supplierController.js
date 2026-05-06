@@ -1,4 +1,5 @@
-const pool = require('../config/db');
+const { tenantQuery, tenantExecute, getTenantContext } = require('../config/db');
+const { generateKodeMaster } = require('../lib/kodetrans');
 
 exports.getAll = async (req, res) => {
   try {
@@ -7,7 +8,7 @@ exports.getAll = async (req, res) => {
     const params = [];
     if (search) { sql += ' AND (namasupplier LIKE ? OR kodesupplier LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
     sql += ' ORDER BY idsupplier ASC';
-    const [rows] = await pool.query(sql, params);
+    const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -16,14 +17,14 @@ exports.getAll = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
+    const ctx = getTenantContext();
     const { namasupplier, alamat, hp } = req.body;
-    const [[{ maxKode }]] = await pool.query('SELECT MAX(kodesupplier) as maxKode FROM supplier');
-    let num = 1;
-    if (maxKode) { const parts = maxKode.split('-'); num = parseInt(parts[1]) + 1; }
-    const kodesupplier = `SUP-${String(num).padStart(4, '0')}`;
-    const [result] = await pool.query('INSERT INTO supplier (kodesupplier, namasupplier, alamat, hp) VALUES (?, ?, ?, ?)',
-      [kodesupplier, namasupplier, alamat || '', hp || '']);
-    res.status(201).json({ message: 'Supplier berhasil ditambah', idsupplier: result.insertId, kodesupplier });
+    const kodesupplier = await generateKodeMaster(await require('../config/db').getConnection(), 'SUP', ctx.idtenant, 'supplier', 'kodesupplier', 4);
+    await tenantExecute(
+      'INSERT INTO supplier (idtenant, kodesupplier, namasupplier, alamat, hp, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [ctx.idtenant, kodesupplier, namasupplier, alamat || '', hp || '', 'AKTIF', ctx.iduser]
+    );
+    res.status(201).json({ message: 'Supplier berhasil ditambah', kodesupplier });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -31,9 +32,10 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
+    const ctx = getTenantContext();
     const { namasupplier, alamat, hp } = req.body;
-    await pool.query('UPDATE supplier SET namasupplier = ?, alamat = ?, hp = ? WHERE idsupplier = ?',
-      [namasupplier, alamat, hp, req.params.id]);
+    await tenantExecute('UPDATE supplier SET namasupplier = ?, alamat = ?, hp = ? WHERE idsupplier = ? AND idtenant = ?',
+      [namasupplier, alamat, hp, req.params.id, ctx.idtenant]);
     res.json({ message: 'Supplier berhasil diupdate' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -42,7 +44,14 @@ exports.update = async (req, res) => {
 
 exports.remove = async (req, res) => {
   try {
-    await pool.query('DELETE FROM supplier WHERE idsupplier = ? AND kodesupplier != ?', [req.params.id, 'SUP-0001']);
+    const ctx = getTenantContext();
+    const conn = await require('../config/db').getConnection();
+    const [[{ cnt }]] = await conn.query('SELECT COUNT(*) as cnt FROM beli WHERE idsupplier = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
+    conn.release();
+    if (cnt > 0) {
+      return res.status(400).json({ message: 'Supplier sudah digunakan di transaksi. Nonaktifkan saja.' });
+    }
+    await tenantExecute('DELETE FROM supplier WHERE idsupplier = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
     res.json({ message: 'Supplier berhasil dihapus' });
   } catch (err) {
     res.status(500).json({ message: err.message });

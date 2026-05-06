@@ -1,4 +1,5 @@
-const pool = require('../config/db');
+const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../config/db');
+const { generateKodeMaster } = require('../lib/kodetrans');
 
 exports.getAll = async (req, res) => {
   try {
@@ -7,7 +8,7 @@ exports.getAll = async (req, res) => {
     const params = [];
     if (search) { sql += ' AND (namaakun LIKE ? OR kodeakun LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
     sql += ' ORDER BY idakun DESC';
-    const [rows] = await pool.query(sql, params);
+    const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -16,7 +17,7 @@ exports.getAll = async (req, res) => {
 
 exports.getOne = async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM akun WHERE idakun = ?', [req.params.id]);
+    const rows = await tenantQuery('SELECT * FROM akun WHERE idakun = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Akun tidak ditemukan' });
     res.json(rows[0]);
   } catch (err) {
@@ -25,19 +26,17 @@ exports.getOne = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
+    const ctx = getTenantContext();
     await conn.beginTransaction();
-    const { namaakun, posisi } = req.body;
+    const { namaakun, saldo } = req.body;
 
-    const [[{ maxKode }]] = await conn.query('SELECT MAX(kodeakun) as maxKode FROM akun');
-    let num = 1;
-    if (maxKode) { const parts = maxKode.split('-'); num = parseInt(parts[1]) + 1; }
-    const kodeakun = `AKN-${String(num).padStart(4, '0')}`;
+    const kodeakun = await generateKodeMaster(conn, 'AKN', ctx.idtenant, 'akun', 'kodeakun', 4);
 
     await conn.query(
-      'INSERT INTO akun (kodeakun, namaakun, posisi, iduser) VALUES (?, ?, ?, ?)',
-      [kodeakun, namaakun, posisi || 'DEBET', req.user.iduser]
+      'INSERT INTO akun (idtenant, kodeakun, namaakun, saldo, status, userentry) VALUES (?, ?, ?, ?, ?, ?)',
+      [ctx.idtenant, kodeakun, namaakun, saldo || 'DEBET', 'AKTIF', ctx.iduser]
     );
 
     await conn.commit();
@@ -51,18 +50,19 @@ exports.create = async (req, res) => {
 };
 
 exports.update = async (req, res) => {
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
+    const ctx = getTenantContext();
     await conn.beginTransaction();
-    const { namaakun, posisi, status } = req.body;
+    const { namaakun, saldo, status } = req.body;
     const { id } = req.params;
 
-    const [rows] = await conn.query('SELECT * FROM akun WHERE idakun = ?', [id]);
+    const [rows] = await conn.query('SELECT * FROM akun WHERE idakun = ? AND idtenant = ?', [id, ctx.idtenant]);
     if (rows.length === 0) return res.status(404).json({ message: 'Akun tidak ditemukan' });
 
     await conn.query(
-      'UPDATE akun SET namaakun = ?, posisi = ?, status = ? WHERE idakun = ?',
-      [namaakun || rows[0].namaakun, posisi || rows[0].posisi, status ?? rows[0].status, id]
+      'UPDATE akun SET namaakun = ?, saldo = ?, status = ? WHERE idakun = ? AND idtenant = ?',
+      [namaakun || rows[0].namaakun, saldo ?? rows[0].saldo, status ?? rows[0].status, id, ctx.idtenant]
     );
 
     await conn.commit();
@@ -77,7 +77,14 @@ exports.update = async (req, res) => {
 
 exports.remove = async (req, res) => {
   try {
-    await pool.query('DELETE FROM akun WHERE idakun = ?', [req.params.id]);
+    const ctx         = getTenantContext();
+    const conn        = await getConnection();
+    const [[{ cnt }]] = await conn.query('SELECT COUNT(*) as cnt FROM jurnal WHERE idakun = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
+    conn.release();
+    if (cnt > 0) {
+      return res.status(400).json({ message: 'Akun sudah digunakan di jurnal. Nonaktifkan saja.' });
+    }
+    await tenantExecute('DELETE FROM akun WHERE idakun = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
     res.json({ message: 'Akun berhasil dihapus' });
   } catch (err) {
     res.status(500).json({ message: err.message });
