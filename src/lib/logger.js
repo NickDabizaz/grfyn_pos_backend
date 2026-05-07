@@ -9,7 +9,7 @@ function getLogFilePath(date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
-  return path.join(LOG_DIR, `error-${y}-${m}-${day}.log`);
+  return path.join(LOG_DIR, `error-${y}-${m}-${day}.json`);
 }
 
 function cleanOldLogs(retentionDays = 30) {
@@ -18,7 +18,7 @@ function cleanOldLogs(retentionDays = 30) {
   const now = new Date();
   let deleted = 0;
   for (const f of files) {
-    const match = f.match(/^error-(\d{4})-(\d{2})-(\d{2})\.log$/);
+    const match = f.match(/^error-(\d{4})-(\d{2})-(\d{2})\.json$/);
     if (!match) continue;
     const fileDate = new Date(`${match[1]}-${match[2]}-${match[3]}`);
     const diffDays = Math.floor((now - fileDate) / (1000 * 60 * 60 * 24));

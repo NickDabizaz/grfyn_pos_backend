@@ -1,4 +1,5 @@
 const { tenantQuery, tenantExecute, getTenantContext } = require('../config/db');
+const logger = require('../lib/logger');
 
 exports.updateToko = async (req, res) => {
   try {
@@ -8,6 +9,7 @@ exports.updateToko = async (req, res) => {
       [namatenant, alamat, hp, email, (ppn !== undefined && ppn !== null) ? ppn : 11, ctx.idtenant]);
     res.json({ message: 'Setting berhasil diupdate' });
   } catch (err) {
+    logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };
@@ -20,6 +22,7 @@ exports.updateLogo = async (req, res) => {
     await tenantExecute('UPDATE tenant SET logo = ? WHERE idtenant = ?', [logoPath, ctx.idtenant]);
     res.json({ message: 'Logo berhasil diupdate', logo: logoPath });
   } catch (err) {
+    logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };

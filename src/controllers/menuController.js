@@ -1,4 +1,5 @@
 const { pool, getTenantContext } = require('../config/db');
+const logger = require('../lib/logger');
 
 exports.myMenu = async (req, res) => {
   try {
@@ -25,6 +26,7 @@ exports.myMenu = async (req, res) => {
     const tree = buildTree(menus);
     res.json(tree);
   } catch (err) {
+    logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };

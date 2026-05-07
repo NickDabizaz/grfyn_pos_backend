@@ -9,7 +9,7 @@ exports.index = async (req, res) => {
     const logFiles = [];
     if (fs.existsSync(LOG_DIR)) {
       const files = fs.readdirSync(LOG_DIR)
-        .filter(f => f.endsWith('.log'))
+        .filter(f => f.endsWith('.json'))
         .sort()
         .reverse();
       for (const f of files) {
@@ -76,19 +76,13 @@ exports.clearOldLogs = (req, res) => {
     let deleted = 0;
     if (fs.existsSync(LOG_DIR)) {
       const files = fs.readdirSync(LOG_DIR);
-      const now = new Date();
       for (const f of files) {
-        if (!f.endsWith('.log')) continue;
-        const filePath = path.join(LOG_DIR, f);
-        const stat = fs.statSync(filePath);
-        const diffDays = Math.floor((now - stat.mtime) / (1000 * 60 * 60 * 24));
-        if (diffDays > 30) {
-          fs.unlinkSync(filePath);
-          deleted++;
-        }
+        if (!f.endsWith('.json')) continue;
+        fs.unlinkSync(path.join(LOG_DIR, f));
+        deleted++;
       }
     }
-    res.redirect('/developer/maintenance?success=' + deleted + '+log+files+deleted');
+    res.redirect('/developer/maintenance?success=' + deleted + '+file+log+berhasil+dihapus');
   } catch (err) {
     res.redirect('/developer/maintenance?error=' + encodeURIComponent(err.message));
   }

@@ -48,6 +48,7 @@ router.get('/', dashboardController.index);
 
 router.get('/logs/error', logController.errorLog);
 router.get('/logs/error/download', logController.downloadLog);
+router.post('/logs/error/delete', logController.deleteLog);
 router.get('/logs/history', historyController.historyLog);
 
 router.get('/database', dbHealthController.index);

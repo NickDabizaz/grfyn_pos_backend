@@ -30,9 +30,9 @@
         </div>
       <% } %>
       <div class="px-4 py-3 border-t border-gray-800">
-        <form method="POST" action="/developer/maintenance/clear-logs" onsubmit="return confirm('Delete log files older than 30 days?')">
-          <button type="submit" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2">
-            <i data-lucide="trash-2" class="w-4 h-4"></i> Delete Old Logs (&gt;30 days)
+        <form id="form-clear-logs" method="POST" action="/developer/maintenance/clear-logs">
+          <button type="button" onclick="openModal('modal-clear-logs')" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2">
+            <i data-lucide="trash-2" class="w-4 h-4"></i> Hapus Semua Log
           </button>
         </form>
       </div>
@@ -66,4 +66,44 @@
   </div>
 </div>
 
-<script>if(typeof lucide!=='undefined'){lucide.createIcons();}</script>
+<!-- Modal Konfirmasi Hapus Semua Log -->
+<div id="modal-clear-logs" class="fixed inset-0 z-50 items-center justify-center p-4" style="display:none">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeModal('modal-clear-logs')"></div>
+  <div class="relative bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center shrink-0">
+        <i data-lucide="trash-2" class="w-5 h-5 text-red-400"></i>
+      </div>
+      <div>
+        <h3 class="text-base font-semibold text-white">Hapus Semua Log</h3>
+        <p class="text-xs text-gray-400 mt-0.5">Tindakan ini tidak bisa dibatalkan</p>
+      </div>
+    </div>
+    <p class="text-sm text-gray-300 mb-6">Semua file log akan dihapus permanen. Yakin ingin melanjutkan?</p>
+    <div class="flex gap-3 justify-end">
+      <button type="button" onclick="closeModal('modal-clear-logs')" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-sm rounded-lg transition-colors">
+        Batal
+      </button>
+      <button type="button" onclick="document.getElementById('form-clear-logs').submit()" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
+        <i data-lucide="trash-2" class="w-4 h-4"></i> Ya, Hapus
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function openModal(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'flex';
+  }
+  function closeModal(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('[id^="modal-"]').forEach(function(m) { m.style.display = 'none'; });
+    }
+  });
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+</script>

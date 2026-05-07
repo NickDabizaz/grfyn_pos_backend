@@ -1,4 +1,5 @@
 const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../config/db');
+const logger = require('../lib/logger');
 
 exports.getAll = async (req, res) => {
   try {
@@ -9,6 +10,7 @@ exports.getAll = async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
+    logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };
@@ -28,6 +30,7 @@ exports.create = async (req, res) => {
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ message: 'Kode lokasi sudah digunakan' });
     }
+    logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };
@@ -42,6 +45,7 @@ exports.update = async (req, res) => {
     );
     res.json({ message: 'Lokasi berhasil diupdate' });
   } catch (err) {
+    logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };

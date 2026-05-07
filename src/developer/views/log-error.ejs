@@ -1,10 +1,15 @@
+<% if (locals.deleted) { %>
+  <div class="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-sm text-green-400 flex items-center gap-2">
+    <i data-lucide="check-circle" class="w-4 h-4"></i> File log berhasil dihapus.
+  </div>
+<% } %>
 <% if (locals.error) { %>
   <div class="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400"><%= error %></div>
 <% } %>
 
 <div class="mb-6">
   <h1 class="text-xl font-bold text-white">Log Error Viewer</h1>
-  <p class="text-sm text-gray-500 mt-1">Browse error log files (JSON Lines)</p>
+  <p class="text-sm text-gray-500 mt-1">Browse error log files (JSON)</p>
 </div>
 
 <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
@@ -14,7 +19,7 @@
       <select name="date" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-orange-500">
         <option value="">-- Pilih --</option>
         <% files.forEach(f => { %>
-          <% const d = f.replace('error-', '').replace('.log', ''); %>
+          <% const d = f.replace('error-', '').replace('.json', ''); %>
           <option value="<%= d %>" <%= date === d ? 'selected' : '' %>><%= d %></option>
         <% }); %>
       </select>
@@ -28,6 +33,12 @@
       <a href="/developer/logs/error/download?file=<%= selectedFile %>" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-2">
         <i data-lucide="download" class="w-4 h-4"></i> Download
       </a>
+      <form id="form-delete-log" method="POST" action="/developer/logs/error/delete" class="inline">
+        <input type="hidden" name="file" value="error-<%= selectedFile %>.json">
+        <button type="button" onclick="openLogModal()" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-2">
+          <i data-lucide="trash-2" class="w-4 h-4"></i> Hapus File Ini
+        </button>
+      </form>
     <% } %>
   </form>
 </div>
@@ -35,38 +46,49 @@
 <% if (selectedFile) { %>
   <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
     <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-      <span class="text-sm text-gray-400">File: <span class="text-white font-mono"><%= selectedFile %>.log</span> — <%= totalLines %> entries</span>
-      <span class="text-xs text-gray-500">Page <%= currentPage %> / <%= totalPages %></span>
+      <span class="text-sm text-gray-400">File: <span class="text-white font-mono">error-<%= selectedFile %>.json</span> &mdash; <%= totalLines %> entries</span>
+      <span class="text-xs text-gray-500">Page <%= currentPage %> / <%= Math.max(1, totalPages) %></span>
     </div>
+
     <% if (lines.length === 0) { %>
       <div class="p-8 text-center text-gray-500">
         <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 text-gray-600"></i>
         <p>No entries found</p>
       </div>
     <% } else { %>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-800">
-              <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase w-48">Timestamp</th>
-              <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase w-16">Level</th>
-              <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Message</th>
-              <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase w-24">Path</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800 font-mono">
-            <% lines.forEach(line => { %>
-            <tr class="hover:bg-gray-800/50 transition-colors">
-              <td class="px-4 py-2 text-xs text-gray-500 whitespace-nowrap"><%= line.ts ? new Date(line.ts).toLocaleString('id-ID') : '-' %></td>
-              <td class="px-4 py-2">
-                <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-500/10 text-red-400"><%= line.level || 'error' %></span>
-              </td>
-              <td class="px-4 py-2 text-xs text-gray-300 max-w-md truncate"><%= line.message || line.raw || '-' %></td>
-              <td class="px-4 py-2 text-xs text-gray-500"><%= line.path || '-' %></td>
-            </tr>
-            <% }); %>
-          </tbody>
-        </table>
+      <div class="p-3 space-y-2">
+        <% lines.forEach((line, idx) => { %>
+          <div class="rounded-lg border border-gray-800 overflow-hidden">
+            <button
+              onclick="toggleEntry(<%= idx %>)"
+              class="w-full flex items-start gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors text-left"
+            >
+              <span class="shrink-0 mt-0.5">
+                <span class="inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-red-500/15 text-red-400 uppercase"><%= line.level || 'error' %></span>
+              </span>
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm text-gray-200 truncate font-mono"><%= line.message || line.raw || '-' %></span>
+                <span class="block text-xs text-gray-500 mt-0.5">
+                  <% if (line.ts) { %><span class="mr-3"><%= new Date(line.ts).toLocaleString('id-ID') %></span><% } %>
+                  <% if (line.path) { %><span class="text-orange-400/70 font-mono"><%= line.method || '' %> <%= line.path %></span><% } %>
+                </span>
+              </span>
+              <span class="shrink-0 text-gray-600" id="chevron-<%= idx %>">
+                <i data-lucide="chevron-down" class="w-4 h-4 transition-transform"></i>
+              </span>
+            </button>
+            <div id="entry-<%= idx %>" class="hidden border-t border-gray-800 bg-gray-950">
+              <pre class="p-4 text-xs overflow-x-auto leading-relaxed font-mono" id="json-<%= idx %>"></pre>
+              <script>
+                (function(){
+                  var raw = <%- JSON.stringify(line) %>;
+                  var el = document.getElementById('json-<%= idx %>');
+                  if (el) el.innerHTML = syntaxHighlight(JSON.stringify(raw, null, 2));
+                })();
+              </script>
+            </div>
+          </div>
+        <% }); %>
       </div>
     <% } %>
 
@@ -85,12 +107,84 @@
 <% } else { %>
   <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
     <i data-lucide="file-text" class="w-12 h-12 mx-auto mb-3 text-gray-600"></i>
-    <h3 class="text-lg font-semibold text-white mb-1">Select a log file</h3>
-    <p class="text-sm text-gray-500">Choose a date from the dropdown above to view error logs</p>
+    <h3 class="text-lg font-semibold text-white mb-1">Pilih file log</h3>
+    <p class="text-sm text-gray-500">Pilih tanggal dari dropdown di atas untuk melihat error log</p>
     <% if (files.length === 0) { %>
-      <p class="text-sm text-gray-600 mt-4">No log files found yet</p>
+      <p class="text-sm text-gray-600 mt-4">Belum ada file log</p>
     <% } %>
   </div>
 <% } %>
 
-<script>if(typeof lucide!=='undefined'){lucide.createIcons();}</script>
+<!-- Modal Konfirmasi Hapus File Log -->
+<div id="modal-delete-log" class="fixed inset-0 z-50 items-center justify-center p-4" style="display:none">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeLogModal()"></div>
+  <div class="relative bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center shrink-0">
+        <i data-lucide="trash-2" class="w-5 h-5 text-red-400"></i>
+      </div>
+      <div>
+        <h3 class="text-base font-semibold text-white">Hapus File Log</h3>
+        <p class="text-xs text-gray-400 mt-0.5">Tindakan ini tidak bisa dibatalkan</p>
+      </div>
+    </div>
+    <p class="text-sm text-gray-300 mb-6">File log ini akan dihapus permanen. Yakin ingin melanjutkan?</p>
+    <div class="flex gap-3 justify-end">
+      <button type="button" onclick="closeLogModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-sm rounded-lg transition-colors">
+        Batal
+      </button>
+      <button type="button" onclick="document.getElementById('form-delete-log').submit()" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
+        <i data-lucide="trash-2" class="w-4 h-4"></i> Ya, Hapus
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .json-key  { color: #f97316; }
+  .json-str  { color: #86efac; }
+  .json-num  { color: #67e8f9; }
+  .json-bool { color: #a78bfa; }
+  .json-null { color: #6b7280; }
+</style>
+<script>
+  function openLogModal() {
+    document.getElementById('modal-delete-log').style.display = 'flex';
+  }
+  function closeLogModal() {
+    document.getElementById('modal-delete-log').style.display = 'none';
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeLogModal();
+  });
+
+  function syntaxHighlight(json) {
+    json = json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return json.replace(
+      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+      function(match) {
+        if (/^"/.test(match)) {
+          if (/:$/.test(match)) return '<span class="json-key">' + match + '</span>';
+          return '<span class="json-str">' + match + '</span>';
+        }
+        if (/true|false/.test(match)) return '<span class="json-bool">' + match + '</span>';
+        if (/null/.test(match))       return '<span class="json-null">' + match + '</span>';
+        return '<span class="json-num">' + match + '</span>';
+      }
+    );
+  }
+
+  function toggleEntry(idx) {
+    var el = document.getElementById('entry-' + idx);
+    var ch = document.getElementById('chevron-' + idx);
+    if (!el) return;
+    var isHidden = el.classList.contains('hidden');
+    el.classList.toggle('hidden', !isHidden);
+    if (ch) {
+      var icon = ch.querySelector('i');
+      if (icon) icon.style.transform = isHidden ? 'rotate(180deg)' : '';
+    }
+  }
+
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+</script>
