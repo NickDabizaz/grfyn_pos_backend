@@ -20,8 +20,10 @@ exports.getAll = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     const ctx                          = getTenantContext();
-    const { namacustomer, alamat, hp } = req.body;
-    const kodecustomer                 = await generateKodeMaster(await require('../config/db').getConnection(), 'CST', ctx.idtenant, 'customer', 'kodecustomer', 4);
+    const { namacustomer, alamat, hp, kodecustomer: customKode, status } = req.body;
+    const kodecustomer = (customKode && customKode.trim())
+      ? customKode.trim().toUpperCase()
+      : await generateKodeMaster(await require('../config/db').getConnection(), 'CST', ctx.idtenant, 'customer', 'kodecustomer', 4);
     await tenantExecute(
       'INSERT INTO customer (idtenant, kodecustomer, namacustomer, alamat, hp, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [ctx.idtenant, kodecustomer, namacustomer, alamat || '', hp || '', 'AKTIF', ctx.iduser]
@@ -36,9 +38,9 @@ exports.create = async (req, res) => {
 exports.update = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    const { namacustomer, alamat, hp } = req.body;
-    await tenantExecute('UPDATE customer SET namacustomer = ?, alamat = ?, hp = ? WHERE idcustomer = ? AND idtenant = ?',
-      [namacustomer, alamat, hp, req.params.id, ctx.idtenant]);
+    const { namacustomer, alamat, hp, status } = req.body;
+    await tenantExecute('UPDATE customer SET namacustomer = ?, alamat = ?, hp = ?, status = ? WHERE idcustomer = ? AND idtenant = ?',
+      [namacustomer, alamat, hp, status || 'AKTIF', req.params.id, ctx.idtenant]);
     res.json({ message: 'Customer berhasil diupdate' });
   } catch (err) {
     logger.error(err, { req });

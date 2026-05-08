@@ -133,8 +133,8 @@ exports.importBarang = async (req, res) => {
       try {
         const [[{ maxKode }]] = await conn.query('SELECT MAX(kodebarang) as maxKode FROM barang WHERE idtenant = ?', [ctx.idtenant]);
         let num = 1;
-        if (maxKode) { num = parseInt(maxKode.replace('BRG-', '')) + 1; }
-        const kodebarang = `BRG-${String(num).padStart(4, '0')}`;
+        if (maxKode) { num = parseInt(maxKode.replace('BRG', '')) + 1; }
+        const kodebarang = `BRG${String(num).padStart(4, '0')}`;
 
         const [result] = await conn.query(
           'INSERT INTO barang (idtenant, kodebarang, namabarang, satuanbesar, satuansedang, satuankecil, konversi1, konversi2, jenis, stokmin, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -187,8 +187,8 @@ exports.importCustomer = async (req, res) => {
       try {
         const [[{ maxKode }]] = await conn.query('SELECT MAX(kodecustomer) as maxKode FROM customer WHERE idtenant = ?', [ctx.idtenant]);
         let num = 1;
-        if (maxKode) { num = parseInt(maxKode.replace('CST-', '')) + 1; }
-        const kodecustomer = `CST-${String(num).padStart(4, '0')}`;
+        if (maxKode) { num = parseInt(maxKode.replace('CST', '')) + 1; }
+        const kodecustomer = `CST${String(num).padStart(4, '0')}`;
 
         await conn.query('INSERT INTO customer (idtenant, kodecustomer, namacustomer, alamat, hp, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
           [ctx.idtenant, kodecustomer, r.namacustomer, r.alamat || '', r.hp || '', 'AKTIF', ctx.iduser]);
@@ -231,8 +231,8 @@ exports.importSupplier = async (req, res) => {
       try {
         const [[{ maxKode }]] = await conn.query('SELECT MAX(kodesupplier) as maxKode FROM supplier WHERE idtenant = ?', [ctx.idtenant]);
         let num = 1;
-        if (maxKode) { num = parseInt(maxKode.replace('SUP-', '')) + 1; }
-        const kodesupplier = `SUP-${String(num).padStart(4, '0')}`;
+        if (maxKode) { num = parseInt(maxKode.replace('SUP', '')) + 1; }
+        const kodesupplier = `SUP${String(num).padStart(4, '0')}`;
 
         await conn.query('INSERT INTO supplier (idtenant, kodesupplier, namasupplier, alamat, hp, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
           [ctx.idtenant, kodesupplier, r.namasupplier, r.alamat || '', r.hp || '', 'AKTIF', ctx.iduser]);
@@ -287,13 +287,13 @@ exports.templateSupplier = (req, res) => {
 exports.templateBeli = (req, res) => {
   sendCSV(res, 'template_pembelian.csv',
     ['tgltrans', 'idsupplier', 'kodebarang', 'jml', 'harga', 'ppn', 'diskon'],
-    [{ tgltrans: '2025-01-01', idsupplier: '1', kodebarang: 'BRG-0001', jml: '10', harga: '10000', ppn: '11000', diskon: '0' }]
+    [{ tgltrans: '2025-01-01', idsupplier: '1', kodebarang: 'BRG0001', jml: '10', harga: '10000', ppn: '11000', diskon: '0' }]
   );
 };
 
 exports.templateJual = (req, res) => {
   sendCSV(res, 'template_penjualan.csv',
     ['tgltrans', 'idcustomer', 'kodebarang', 'jml', 'harga', 'ppn', 'diskon'],
-    [{ tgltrans: '2025-01-01', idcustomer: '1', kodebarang: 'BRG-0001', jml: '5', harga: '15000', ppn: '8250', diskon: '0' }]
+    [{ tgltrans: '2025-01-01', idcustomer: '1', kodebarang: 'BRG0001', jml: '5', harga: '15000', ppn: '8250', diskon: '0' }]
   );
 };

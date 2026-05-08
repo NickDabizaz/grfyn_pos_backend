@@ -20,8 +20,10 @@ exports.getAll = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    const { namasupplier, alamat, hp } = req.body;
-    const kodesupplier = await generateKodeMaster(await require('../config/db').getConnection(), 'SUP', ctx.idtenant, 'supplier', 'kodesupplier', 4);
+    const { namasupplier, alamat, hp, kodesupplier: customKode } = req.body;
+    const kodesupplier = (customKode && customKode.trim())
+      ? customKode.trim().toUpperCase()
+      : await generateKodeMaster(await require('../config/db').getConnection(), 'SUP', ctx.idtenant, 'supplier', 'kodesupplier', 4);
     await tenantExecute(
       'INSERT INTO supplier (idtenant, kodesupplier, namasupplier, alamat, hp, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [ctx.idtenant, kodesupplier, namasupplier, alamat || '', hp || '', 'AKTIF', ctx.iduser]
@@ -36,9 +38,9 @@ exports.create = async (req, res) => {
 exports.update = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    const { namasupplier, alamat, hp } = req.body;
-    await tenantExecute('UPDATE supplier SET namasupplier = ?, alamat = ?, hp = ? WHERE idsupplier = ? AND idtenant = ?',
-      [namasupplier, alamat, hp, req.params.id, ctx.idtenant]);
+    const { namasupplier, alamat, hp, status } = req.body;
+    await tenantExecute('UPDATE supplier SET namasupplier = ?, alamat = ?, hp = ?, status = ? WHERE idsupplier = ? AND idtenant = ?',
+      [namasupplier, alamat, hp, status || 'AKTIF', req.params.id, ctx.idtenant]);
     res.json({ message: 'Supplier berhasil diupdate' });
   } catch (err) {
     logger.error(err, { req });

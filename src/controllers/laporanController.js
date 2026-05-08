@@ -258,6 +258,32 @@ exports.kartuStok = async (req, res) => {
   }
 };
 
+exports.rekapSales = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const { tglwal, tglakhir, idcustomer } = req.query;
+
+    let sql = `SELECT
+      COUNT(CASE WHEN status != 'VOID' THEN 1 END) as total_transaksi,
+      COALESCE(SUM(CASE WHEN status != 'VOID' THEN grandtotal ELSE 0 END), 0) as total_penjualan,
+      COALESCE(SUM(CASE WHEN status != 'VOID' AND metodbayar = 'TUNAI' THEN grandtotal ELSE 0 END), 0) as total_tunai,
+      COALESCE(SUM(CASE WHEN status != 'VOID' AND metodbayar != 'TUNAI' THEN grandtotal ELSE 0 END), 0) as total_nontunai,
+      COALESCE(SUM(CASE WHEN status != 'VOID' THEN bayar ELSE 0 END), 0) as total_sudah_dibayar,
+      COALESCE(SUM(CASE WHEN status = 'AKTIF' THEN GREATEST(grandtotal - bayar, 0) ELSE 0 END), 0) as total_piutang
+      FROM jual WHERE idlokasi = ?`;
+    const params = [ctx.idlokasi];
+    if (tglwal) { sql += ' AND tgltrans >= ?'; params.push(tglwal); }
+    if (tglakhir) { sql += ' AND tgltrans <= ?'; params.push(tglakhir); }
+    if (idcustomer) { sql += ' AND idcustomer = ?'; params.push(idcustomer); }
+
+    const rows = await tenantQuery(sql, params);
+    res.json(rows[0]);
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
 exports.struk = async (req, res) => {
   try {
     const ctx = getTenantContext();

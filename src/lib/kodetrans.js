@@ -99,11 +99,11 @@ async function generateKodeMaster(conn, prefix, idtenant, table, column, pad = 4
 
   let num = 1;
   if (maxKode) {
-    const numStr = maxKode.replace(`${prefix}-`, '');
+    const numStr = maxKode.replace(`${prefix}`, '');
     num = parseInt(numStr) + 1;
   }
 
-  return `${prefix}-${String(num).padStart(pad, '0')}`;
+  return `${prefix}${String(num).padStart(pad, '0')}`;
 }
 
 async function generateKodeHitungHPP(conn, idtenant, idlokasi, periodbulan) {
@@ -135,6 +135,14 @@ async function generateKodeHitungHPP(conn, idtenant, idlokasi, periodbulan) {
   }
 }
 
+async function generateKodeReturJual(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'RJ', idtenant, idlokasi, 'returjual', 'kodereturjual');
+}
+
+async function generateKodeTukarBarang(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'TB', idtenant, idlokasi, 'tukarbarang', 'kodetukarbarang');
+}
+
 module.exports = {
   generateKode,
   generateKodeJual,
@@ -145,4 +153,6 @@ module.exports = {
   generateKodeClosing,
   generateKodeMaster,
   generateKodeHitungHPP,
+  generateKodeReturJual,
+  generateKodeTukarBarang,
 };

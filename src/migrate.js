@@ -26,6 +26,8 @@ async function migrate() {
     'saldoawaldtl', 'saldoawal',
     'penyesuaianstokdtl', 'penyesuaianstok',
     'kartustok',
+    'tukarbarangdtl_baru', 'tukarbarangdtl_kembali', 'tukarbarang',
+    'returjualdtl', 'returjual',
     'belidtl', 'beli', 'jualdtl', 'jual',
     'hargajual', 'hargabeli',
     'kasdtl', 'kas', 'jurnal',
@@ -33,7 +35,7 @@ async function migrate() {
     'akun',
     'menutemplate',
     'user', 'lokasi', 'tenant',
-    'menu', 'mcurrency',
+    'menu', 'currency',
     'users', 'historyprogram'
   ];
   for (const t of tables) {
@@ -45,9 +47,9 @@ async function migrate() {
   // GLOBAL TABLES (shared semua tenant)
   // ============================================================
 
-  // mcurrency
+  // currency
   await connection.query(`
-    CREATE TABLE mcurrency (
+    CREATE TABLE currency (
       idcurrency    INT AUTO_INCREMENT PRIMARY KEY,
       kodecurrency  VARCHAR(10) NOT NULL UNIQUE,
       namacurrency  VARCHAR(50) NOT NULL,
@@ -91,7 +93,7 @@ async function migrate() {
       status        VARCHAR(20) DEFAULT 'AKTIF',
       userentry     INT NOT NULL,
       tglentry      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (idcurrency) REFERENCES mcurrency(idcurrency)
+      FOREIGN KEY (idcurrency) REFERENCES currency(idcurrency)
     ) ENGINE=InnoDB
   `);
 
@@ -395,6 +397,7 @@ async function migrate() {
       ppn           DECIMAL(15,2) DEFAULT 0,
       diskon        DECIMAL(5,2) DEFAULT 0,
       subtotal      DECIMAL(15,2) NOT NULL,
+      satuan        VARCHAR(20) DEFAULT NULL,
       FOREIGN KEY (idbeli) REFERENCES beli(idbeli) ON DELETE CASCADE,
       FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
       FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
@@ -675,15 +678,125 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
+  // returjual
+  await connection.query(`
+    CREATE TABLE returjual (
+      idreturjual   INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant      INT NOT NULL,
+      idlokasi      INT NOT NULL,
+      kodereturjual VARCHAR(30) NOT NULL,
+      tgltrans      DATE NOT NULL,
+      idcustomer    INT DEFAULT NULL,
+      idjual        INT DEFAULT NULL,
+      kodejual      VARCHAR(30) DEFAULT NULL,
+      iduser        INT NOT NULL,
+      total         DECIMAL(15,2) DEFAULT 0,
+      catatan       TEXT,
+      status        VARCHAR(20) DEFAULT 'AKTIF',
+      userentry     INT NOT NULL,
+      tglentry      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      FOREIGN KEY (idcustomer) REFERENCES customer(idcustomer),
+      FOREIGN KEY (iduser) REFERENCES user(iduser),
+      FOREIGN KEY (userentry) REFERENCES user(iduser),
+      INDEX idx_returjual_tenant_lokasi (idtenant, idlokasi),
+      INDEX idx_returjual_tgl (tgltrans),
+      UNIQUE KEY uq_returjual_kode (idtenant, idlokasi, kodereturjual)
+    ) ENGINE=InnoDB
+  `);
+
+  // returjualdtl
+  await connection.query(`
+    CREATE TABLE returjualdtl (
+      idreturjualdtl INT AUTO_INCREMENT PRIMARY KEY,
+      idreturjual    INT NOT NULL,
+      idtenant       INT NOT NULL,
+      idbarang       INT NOT NULL,
+      jml            INT NOT NULL,
+      harga          DECIMAL(15,2) NOT NULL DEFAULT 0,
+      subtotal       DECIMAL(15,2) NOT NULL DEFAULT 0,
+      tindaklanjut   VARCHAR(20) NOT NULL DEFAULT 'MASUK_STOK',
+      idbarang2nd    INT DEFAULT NULL,
+      FOREIGN KEY (idreturjual) REFERENCES returjual(idreturjual) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
+      FOREIGN KEY (idbarang2nd) REFERENCES barang(idbarang),
+      INDEX idx_returjualdtl_hdr (idreturjual)
+    ) ENGINE=InnoDB
+  `);
+
+  // tukarbarang
+  await connection.query(`
+    CREATE TABLE tukarbarang (
+      idtukarbarang   INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant        INT NOT NULL,
+      idlokasi        INT NOT NULL,
+      kodetukarbarang VARCHAR(30) NOT NULL,
+      tgltrans        DATE NOT NULL,
+      idcustomer      INT DEFAULT NULL,
+      iduser          INT NOT NULL,
+      catatan         TEXT,
+      status          VARCHAR(20) DEFAULT 'AKTIF',
+      userentry       INT NOT NULL,
+      tglentry        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      FOREIGN KEY (idcustomer) REFERENCES customer(idcustomer),
+      FOREIGN KEY (iduser) REFERENCES user(iduser),
+      FOREIGN KEY (userentry) REFERENCES user(iduser),
+      INDEX idx_tukarbarang_tenant_lokasi (idtenant, idlokasi),
+      INDEX idx_tukarbarang_tgl (tgltrans),
+      UNIQUE KEY uq_tukarbarang_kode (idtenant, idlokasi, kodetukarbarang)
+    ) ENGINE=InnoDB
+  `);
+
+  // tukarbarangdtl_kembali — items returned from customer
+  await connection.query(`
+    CREATE TABLE tukarbarangdtl_kembali (
+      idtukarbarangdtl_kembali INT AUTO_INCREMENT PRIMARY KEY,
+      idtukarbarang  INT NOT NULL,
+      idtenant       INT NOT NULL,
+      idbarang       INT NOT NULL,
+      jml            INT NOT NULL,
+      harga          DECIMAL(15,2) NOT NULL DEFAULT 0,
+      subtotal       DECIMAL(15,2) NOT NULL DEFAULT 0,
+      tindaklanjut   VARCHAR(20) NOT NULL DEFAULT 'MASUK_STOK',
+      idbarang2nd    INT DEFAULT NULL,
+      FOREIGN KEY (idtukarbarang) REFERENCES tukarbarang(idtukarbarang) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
+      FOREIGN KEY (idbarang2nd) REFERENCES barang(idbarang),
+      INDEX idx_tukarbarangdtl_kembali_hdr (idtukarbarang)
+    ) ENGINE=InnoDB
+  `);
+
+  // tukarbarangdtl_baru — replacement items to customer
+  await connection.query(`
+    CREATE TABLE tukarbarangdtl_baru (
+      idtukarbarangdtl_baru INT AUTO_INCREMENT PRIMARY KEY,
+      idtukarbarang  INT NOT NULL,
+      idtenant       INT NOT NULL,
+      idbarang       INT NOT NULL,
+      jml            INT NOT NULL,
+      harga          DECIMAL(15,2) NOT NULL DEFAULT 0,
+      subtotal       DECIMAL(15,2) NOT NULL DEFAULT 0,
+      FOREIGN KEY (idtukarbarang) REFERENCES tukarbarang(idtukarbarang) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
+      INDEX idx_tukarbarangdtl_baru_hdr (idtukarbarang)
+    ) ENGINE=InnoDB
+  `);
+
   console.log('All tables created');
 
   // ============================================================
   // SEED DATA
   // ============================================================
 
-  // Seed mcurrency
+  // Seed currency
   await connection.query(
-    `INSERT INTO mcurrency (kodecurrency, namacurrency, simbol, kurs, status) VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO currency (kodecurrency, namacurrency, simbol, kurs, status) VALUES (?, ?, ?, ?, ?)`,
     ['IDR', 'Rupiah', 'Rp', 1.0000, 'AKTIF']
   );
 
@@ -736,6 +849,19 @@ async function migrate() {
     );
   }
 
+  // Seed menu — children: Penjualan
+  const penjualanChildren = [
+    [25, 5, 'penjualan.transaksi',    'Transaksi Jual',   1, null, '/penjualan'],
+    [26, 5, 'penjualan.retur',        'Retur Penjualan',  2, null, '/penjualan/retur'],
+    [27, 5, 'penjualan.tukarbarang',  'Tukar Barang',     3, null, '/penjualan/tukarbarang'],
+  ];
+  for (const m of penjualanChildren) {
+    await connection.query(
+      'INSERT INTO menu (idmenu, idparent, kodemenu, namamenu, urutan, icon, path) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      m
+    );
+  }
+
   // Seed menu — children: Laporan
   const laporanChildren = [
     [19, 8, 'laporan.penjualan',       'Penjualan',       1, null, '/laporan/penjualan'],
@@ -743,6 +869,7 @@ async function migrate() {
     [21, 8, 'laporan.barang',          'Barang',          3, null, '/laporan/master/barang'],
     [22, 8, 'laporan.stoksekarang',    'Stok Sekarang',   4, null, '/laporan/stok/sekarang'],
     [23, 8, 'laporan.kartustok',       'Kartu Stok',      5, null, '/laporan/stok/kartustok'],
+    [28, 8, 'laporan.rekapsales',      'Rekap Sales',     6, null, '/laporan/rekap-sales'],
   ];
   for (const m of laporanChildren) {
     await connection.query(

@@ -3,6 +3,7 @@ const ctrl = require('../controllers/barangController');
 const auth = require('../middleware/auth');
 
 router.get('/', auth, ctrl.getAll);
+router.get('/browse-barang', auth, ctrl.browseBarang);
 router.get('/check-price', auth, ctrl.checkPrice);
 router.get('/:id', auth, ctrl.getOne);
 router.post('/', auth, ctrl.create);

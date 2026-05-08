@@ -16,7 +16,25 @@ exports.getAll = async (req, res) => {
     const params = [ctx.idtenant, ctx.idtenant, ctx.idtenant];
     if (search) { sql += ' AND (b.namabarang LIKE ? OR b.kodebarang LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
     if (jenis) { sql += ' AND b.jenis = ?'; params.push(jenis); }
-    sql += ' GROUP BY b.idbarang ORDER BY b.idbarang DESC';
+    sql += ' GROUP BY b.idbarang ORDER BY kodebarang ASC';
+    const rows = await tenantQuery(sql, params);
+    res.json(rows);
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.browseBarang = async (req, res) => {
+  try {
+    const { search } = req.query;
+    let sql = `SELECT * FROM barang WHERE status = 'AKTIF'`;
+    const params = [];
+    if (search) {
+      sql += ' AND (namabarang LIKE ? OR kodebarang LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    sql += ' ORDER BY kodebarang, namabarang';
     const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
@@ -49,9 +67,11 @@ exports.create = async (req, res) => {
   try {
     const ctx = getTenantContext();
     await conn.beginTransaction();
-    const { namabarang, satuanbesar, satuansedang, satuankecil, konversi1, konversi2, jenis, stokmin, hargabeli, hargajual } = req.body;
+    const { namabarang, satuanbesar, satuansedang, satuankecil, konversi1, konversi2, jenis, stokmin, hargabeli, hargajual, kodebarang: customKode } = req.body;
 
-    const kodebarang = await generateKodeMaster(conn, 'BRG', ctx.idtenant, 'barang', 'kodebarang', 4);
+    const kodebarang = (customKode && customKode.trim())
+      ? customKode.trim().toUpperCase()
+      : await generateKodeMaster(conn, 'BRG', ctx.idtenant, 'barang', 'kodebarang', 4);
     const today = new Date().toISOString().slice(0, 10);
 
     const [result] = await conn.query(

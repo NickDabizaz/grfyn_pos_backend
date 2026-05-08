@@ -59,8 +59,9 @@ exports.create = async (req, res) => {
     }
 
     const calculatedKembali = (bayar || 0) - calculatedGrandTotal;
-    await conn.query('UPDATE jual SET grandtotal = ?, kembali = ? WHERE idjual = ? AND idtenant = ? AND idlokasi = ?',
-      [calculatedGrandTotal, calculatedKembali, header.idjual, ctx.idtenant, ctx.idlokasi]);
+    const statusJual = (bayar || 0) >= calculatedGrandTotal ? 'LUNAS' : 'AKTIF';
+    await conn.query('UPDATE jual SET grandtotal = ?, kembali = ?, status = ? WHERE idjual = ? AND idtenant = ? AND idlokasi = ?',
+      [calculatedGrandTotal, calculatedKembali, statusJual, header.idjual, ctx.idtenant, ctx.idlokasi]);
 
     // Jurnal
     const [[akunKas]] = await conn.query("SELECT idakun FROM akun WHERE namaakun = 'KAS' AND idtenant = ? LIMIT 1", [ctx.idtenant]);
@@ -127,6 +128,43 @@ exports.getOne = async (req, res) => {
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });
+  }
+};
+
+exports.updateBayar = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+    const { bayar } = req.body;
+
+    if (bayar === undefined || bayar === null) return res.status(400).json({ message: 'bayar harus diisi' });
+
+    const [[jual]] = await conn.query('SELECT * FROM jual WHERE idjual = ? AND idtenant = ? AND idlokasi = ?', [id, ctx.idtenant, ctx.idlokasi]);
+    if (!jual) return res.status(404).json({ message: 'Transaksi tidak ditemukan' });
+    if (jual.status === 'VOID') return res.status(400).json({ message: 'Transaksi sudah dibatalkan' });
+
+    const totalBayar = parseFloat(jual.bayar) + parseFloat(bayar);
+    if (totalBayar > parseFloat(jual.grandtotal)) return res.status(400).json({ message: 'Pembayaran melebihi total transaksi' });
+
+    const newStatus = totalBayar >= parseFloat(jual.grandtotal) ? 'LUNAS' : 'AKTIF';
+    const newKembali = totalBayar - parseFloat(jual.grandtotal);
+
+    await conn.query(
+      'UPDATE jual SET bayar = ?, kembali = ?, status = ? WHERE idjual = ? AND idtenant = ? AND idlokasi = ?',
+      [totalBayar, newKembali, newStatus, id, ctx.idtenant, ctx.idlokasi]
+    );
+
+    await conn.commit();
+    await logger.history('JUAL_BAYAR', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: jual.kodejual, detail: { bayar, totalBayar, newStatus }, req });
+    res.json({ message: 'Pembayaran berhasil dicatat', totalBayar, status: newStatus });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
   }
 };
 

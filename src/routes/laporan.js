@@ -8,6 +8,7 @@ router.get('/sales-per-barang', auth, ctrl.salesPerBarang);
 router.get('/pembelian', auth, ctrl.pembelian);
 router.get('/stok', auth, ctrl.stok);
 router.get('/kartu-stok', auth, ctrl.kartuStok);
+router.get('/rekap-sales', auth, ctrl.rekapSales);
 router.get('/struk/:id', auth, ctrl.struk);
 router.get('/faktur/:id', auth, ctrl.faktur);
 
