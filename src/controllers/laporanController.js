@@ -162,6 +162,204 @@ exports.pembelian = async (req, res) => {
   }
 };
 
+exports.salesPerLokasi = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const { tglwal, tglakhir } = req.query;
+    const format = req.query.format || 'json';
+
+    let sql = `SELECT l.idlokasi, l.kodelokasi, l.namalokasi,
+      COUNT(CASE WHEN j.status != 'VOID' THEN j.idjual END) as total_transaksi,
+      COALESCE(SUM(CASE WHEN j.status != 'VOID' THEN j.grandtotal ELSE 0 END), 0) as total_penjualan
+      FROM lokasi l
+      LEFT JOIN jual j ON l.idlokasi = j.idlokasi AND j.idtenant = l.idtenant`;
+    const params = [];
+    const conditions = [];
+    if (tglwal) { conditions.push('j.tgltrans >= ?'); params.push(tglwal); }
+    if (tglakhir) { conditions.push('j.tgltrans <= ?'); params.push(tglakhir); }
+    if (conditions.length > 0) { sql += ' AND ' + conditions.join(' AND '); }
+    sql += ' WHERE l.idtenant = ? GROUP BY l.idlokasi, l.kodelokasi, l.namalokasi ORDER BY total_penjualan DESC';
+    params.push(ctx.idtenant);
+
+    const rows = await tenantQuery(sql, params);
+    const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_penjualan || 0), 0);
+
+    if (format === 'html') {
+      const [[tenant]] = await pool.query('SELECT * FROM tenant WHERE idtenant = ?', [ctx.idtenant]);
+      return res.render('laporan_sales_per_lokasi', {
+        data: rows, grandTotal,
+        tglwal: tglwal || '-', tglakhir: tglakhir || '-',
+        namatoko: tenant?.namatenant || 'Grfyn POS',
+        alamat: '', hp: '', logo: tenant?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: rows, grandTotal });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.pembelianPerSupplier = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const { tglwal, tglakhir, idsupplier } = req.query;
+    const format = req.query.format || 'json';
+
+    let sql = `SELECT s.idsupplier, s.kodesupplier, s.namasupplier,
+      COUNT(b.idbeli) as total_transaksi,
+      COALESCE(SUM(b.grandtotal), 0) as total_pembelian
+      FROM supplier s
+      LEFT JOIN beli b ON s.idsupplier = b.idsupplier AND b.idtenant = s.idtenant AND b.idlokasi = ?`;
+    const params = [ctx.idlokasi];
+    const conditions = [];
+    if (tglwal) { conditions.push('b.tgltrans >= ?'); params.push(tglwal); }
+    if (tglakhir) { conditions.push('b.tgltrans <= ?'); params.push(tglakhir); }
+    if (idsupplier) { conditions.push('s.idsupplier = ?'); params.push(idsupplier); }
+    if (conditions.length > 0) { sql += ' AND ' + conditions.join(' AND '); }
+    sql += ' WHERE s.idtenant = ? GROUP BY s.idsupplier, s.kodesupplier, s.namasupplier ORDER BY total_pembelian DESC';
+    params.push(ctx.idtenant);
+
+    const rows = await tenantQuery(sql, params);
+    const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_pembelian || 0), 0);
+
+    if (format === 'html') {
+      const [[tenant]] = await pool.query('SELECT * FROM tenant WHERE idtenant = ?', [ctx.idtenant]);
+      return res.render('laporan_pembelian_per_supplier', {
+        data: rows, grandTotal,
+        tglwal: tglwal || '-', tglakhir: tglakhir || '-',
+        namatoko: tenant?.namatenant || 'Grfyn POS',
+        alamat: '', hp: '', logo: tenant?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: rows, grandTotal });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.pembelianPerLokasi = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const { tglwal, tglakhir } = req.query;
+    const format = req.query.format || 'json';
+
+    let sql = `SELECT l.idlokasi, l.kodelokasi, l.namalokasi,
+      COUNT(b.idbeli) as total_transaksi,
+      COALESCE(SUM(b.grandtotal), 0) as total_pembelian
+      FROM lokasi l
+      LEFT JOIN beli b ON l.idlokasi = b.idlokasi AND b.idtenant = l.idtenant`;
+    const params = [];
+    const conditions = [];
+    if (tglwal) { conditions.push('b.tgltrans >= ?'); params.push(tglwal); }
+    if (tglakhir) { conditions.push('b.tgltrans <= ?'); params.push(tglakhir); }
+    if (conditions.length > 0) { sql += ' AND ' + conditions.join(' AND '); }
+    sql += ' WHERE l.idtenant = ? GROUP BY l.idlokasi, l.kodelokasi, l.namalokasi ORDER BY total_pembelian DESC';
+    params.push(ctx.idtenant);
+
+    const rows = await tenantQuery(sql, params);
+    const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_pembelian || 0), 0);
+
+    if (format === 'html') {
+      const [[tenant]] = await pool.query('SELECT * FROM tenant WHERE idtenant = ?', [ctx.idtenant]);
+      return res.render('laporan_pembelian_per_lokasi', {
+        data: rows, grandTotal,
+        tglwal: tglwal || '-', tglakhir: tglakhir || '-',
+        namatoko: tenant?.namatenant || 'Grfyn POS',
+        alamat: '', hp: '', logo: tenant?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: rows, grandTotal });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.pembelianPerBarang = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const { tglwal, tglakhir, idbarang } = req.query;
+    const format = req.query.format || 'json';
+
+    let sql = `SELECT b.idbarang, b.kodebarang, b.namabarang, b.satuankecil as satuan,
+      COALESCE(SUM(bd.jml), 0) as total_qty,
+      COALESCE(SUM(bd.subtotal), 0) as total_nilai
+      FROM barang b
+      LEFT JOIN belidtl bd ON b.idbarang = bd.idbarang AND b.idtenant = bd.idtenant
+      LEFT JOIN beli bl ON bd.idbeli = bl.idbeli AND bl.idtenant = bd.idtenant AND bl.idlokasi = ?`;
+    const params = [ctx.idlokasi];
+    const conditions = [];
+    if (tglwal) { conditions.push('bl.tgltrans >= ?'); params.push(tglwal); }
+    if (tglakhir) { conditions.push('bl.tgltrans <= ?'); params.push(tglakhir); }
+    if (idbarang) { conditions.push('b.idbarang = ?'); params.push(idbarang); }
+    if (conditions.length > 0) { sql += ' WHERE ' + conditions.join(' AND '); }
+    sql += ' GROUP BY b.idbarang, b.kodebarang, b.namabarang, b.satuankecil ORDER BY total_nilai DESC';
+
+    const rows = await tenantQuery(sql, params);
+    const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_nilai || 0), 0);
+
+    if (format === 'html') {
+      const [[tenant]] = await pool.query('SELECT * FROM tenant WHERE idtenant = ?', [ctx.idtenant]);
+      return res.render('laporan_pembelian_per_barang', {
+        data: rows, grandTotal,
+        tglwal: tglwal || '-', tglakhir: tglakhir || '-',
+        namatoko: tenant?.namatenant || 'Grfyn POS',
+        alamat: '', hp: '', logo: tenant?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json({ data: rows, grandTotal });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.pembelianRekap = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const { tglwal, tglakhir, idsupplier } = req.query;
+
+    let sql = `SELECT
+      COUNT(CASE WHEN status != 'VOID' THEN 1 END) as total_transaksi,
+      COALESCE(SUM(CASE WHEN status != 'VOID' THEN grandtotal ELSE 0 END), 0) as total_pembelian,
+      COALESCE(SUM(CASE WHEN status != 'VOID' THEN bayar ELSE 0 END), 0) as total_dibayar,
+      COALESCE(SUM(CASE WHEN status = 'AKTIF' THEN GREATEST(grandtotal - bayar, 0) ELSE 0 END), 0) as total_hutang
+      FROM beli WHERE idlokasi = ?`;
+    const params = [ctx.idlokasi];
+    if (tglwal) { sql += ' AND tgltrans >= ?'; params.push(tglwal); }
+    if (tglakhir) { sql += ' AND tgltrans <= ?'; params.push(tglakhir); }
+    if (idsupplier) { sql += ' AND idsupplier = ?'; params.push(idsupplier); }
+
+    const rows = await tenantQuery(sql, params);
+
+    if (req.query.format === 'html') {
+      const [[tenant]] = await pool.query('SELECT * FROM tenant WHERE idtenant = ?', [ctx.idtenant]);
+      return res.render('laporan_pembelian_rekap', {
+        data: rows[0],
+        tglwal: tglwal || '-', tglakhir: tglakhir || '-',
+        namatoko: tenant?.namatenant || 'Grfyn POS',
+        alamat: '', hp: '', logo: tenant?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
 exports.stok = async (req, res) => {
   try {
     const ctx = getTenantContext();
@@ -277,6 +475,18 @@ exports.rekapSales = async (req, res) => {
     if (idcustomer) { sql += ' AND idcustomer = ?'; params.push(idcustomer); }
 
     const rows = await tenantQuery(sql, params);
+
+    if (req.query.format === 'html') {
+      const [[tenant]] = await pool.query('SELECT * FROM tenant WHERE idtenant = ?', [ctx.idtenant]);
+      return res.render('laporan_sales_rekap', {
+        data: rows[0],
+        tglwal: tglwal || '-', tglakhir: tglakhir || '-',
+        namatoko: tenant?.namatenant || 'Grfyn POS',
+        alamat: '', hp: '', logo: tenant?.logo || '',
+        tglcetak: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })
+      });
+    }
+
     res.json(rows[0]);
   } catch (err) {
     logger.error(err, { req });
