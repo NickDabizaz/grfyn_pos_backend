@@ -44,8 +44,8 @@ exports.create = async (req, res) => {
       calculatedGrandTotal += subtotal;
 
       await conn.query(
-        'INSERT INTO jualdtl (idjual, idtenant, idbarang, jml, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [header.idjual, ctx.idtenant, item.idbarang, item.jml, harga, ppnAmount, item.diskon || 0, subtotal]
+        'INSERT INTO jualdtl (idjual, idtenant, idbarang, jml, satuan, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [header.idjual, ctx.idtenant, item.idbarang, item.jml, item.satuan, harga, ppnAmount, item.diskon || 0, subtotal]
       );
 
       await conn.query(
@@ -153,7 +153,7 @@ exports.getOne = async (req, res) => {
       WHERE j.idjual = ? AND j.idlokasi = ?`, [req.params.id, ctx.idlokasi]);
     if (rows.length === 0) return res.status(404).json({ message: 'Transaksi tidak ditemukan' });
 
-    const items = await tenantQuery(`SELECT jd.*, b.namabarang, b.satuankecil
+    const items = await tenantQuery(`SELECT jd.*, b.namabarang
       FROM jualdtl jd
       LEFT JOIN barang b ON jd.idbarang = b.idbarang AND b.idtenant = jd.idtenant
       WHERE jd.idjual = ?`, [req.params.id]);
@@ -353,8 +353,8 @@ exports.update = async (req, res) => {
       calculatedGrandTotal += subtotal;
 
       await conn.query(
-        'INSERT INTO jualdtl (idjual, idtenant, idbarang, jml, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, ctx.idtenant, item.idbarang, item.jml, harga, ppnAmount, item.diskon || 0, subtotal]
+        'INSERT INTO jualdtl (idjual, idtenant, idbarang, jml, satuan, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, ctx.idtenant, item.idbarang, item.jml, item.satuan, harga, ppnAmount, item.diskon || 0, subtotal]
       );
 
       await conn.query(
