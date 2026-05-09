@@ -112,7 +112,7 @@ exports.create = async (req, res) => {
       const kodepelunasan = await generateKodePelunasanHutang(conn, ctx.idtenant, idlokasi);
       const [pelResult] = await conn.query(
         'INSERT INTO pelunasanhutang (idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [ctx.idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan otomatis ${kodebeli}`, ctx.iduser]
+        [ctx.idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan Langsung Transaksi Pembelian  ${kodebeli}`, ctx.iduser]
       );
       const idpelunasan = pelResult.insertId;
 
@@ -171,7 +171,7 @@ exports.getAll = async (req, res) => {
 exports.getOne = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    const rows = await tenantQuery(`SELECT b.*,
+    const rows = await tenantQuery(`SELECT b.*, DATE_FORMAT(b.tgltrans, '%Y-%m-%d') AS tgltrans,
       s.namasupplier, s.kodesupplier, s.alamat AS salamat, s.hp AS shp,
       l.namalokasi, l.kodelokasi, COALESCE(kh.status, 'BELUMLUNAS') as statuslunas
       FROM beli b
@@ -292,7 +292,7 @@ if (!beli) return res.status(404).json({ message: 'Pembelian tidak ditemukan' })
       const kodepelunasan = await generateKodePelunasanHutang(conn, ctx.idtenant, idlokasi);
       const [pelResult] = await conn.query(
         'INSERT INTO pelunasanhutang (idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [ctx.idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan otomatis ${kodebeli}`, ctx.iduser]
+        [ctx.idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan Langsung Transaksi Pembelian  ${kodebeli}`, ctx.iduser]
       );
       const idpelunasan = pelResult.insertId;
 

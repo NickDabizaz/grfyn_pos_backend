@@ -85,7 +85,7 @@ exports.create = async (req, res) => {
       const kodepelunasan = await generateKodePelunasanPiutang(conn, ctx.idtenant, ctx.idlokasi);
       const [pelResult] = await conn.query(
         'INSERT INTO pelunasanpiutang (idtenant, idlokasi, idcustomer, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [ctx.idtenant, ctx.idlokasi, idcustomer, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan otomatis ${kodejual}`, ctx.iduser]
+        [ctx.idtenant, ctx.idlokasi, idcustomer, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan Langsung Transaksi Penjualan ${kodejual}`, ctx.iduser]
       );
       const idpelunasan = pelResult.insertId;
 
@@ -121,9 +121,10 @@ exports.getAll = async (req, res) => {
   try {
     const ctx = getTenantContext();
     const { tglwal, tglakhir, idcustomer, jenis, search } = req.query;
-    let sql = `SELECT j.*, DATE_FORMAT(j.tgltrans, '%Y-%m-%d') AS tgltrans, c.namacustomer
+    let sql = `SELECT j.*, DATE_FORMAT(j.tgltrans, '%Y-%m-%d') AS tgltrans, c.namacustomer, l.namalokasi
       FROM jual j
       LEFT JOIN customer c ON j.idcustomer = c.idcustomer AND c.idtenant = j.idtenant
+      LEFT JOIN lokasi l ON j.idlokasi = l.idlokasi AND l.idtenant = j.idtenant
       WHERE 1=1`;
     const params = [];
     sql += ' AND j.idlokasi = ?'; params.push(ctx.idlokasi);
@@ -144,10 +145,11 @@ exports.getAll = async (req, res) => {
 exports.getOne = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    const rows = await tenantQuery(`SELECT j.*, c.namacustomer, COALESCE(kp.status,'BELUMLUNAS') as statuslunas
+    const rows = await tenantQuery(`SELECT j.*, DATE_FORMAT(j.tgltrans, '%Y-%m-%d') AS tgltrans, c.kodecustomer, c.namacustomer, c.alamat, c.hp, COALESCE(kp.status,'BELUMLUNAS') as statuslunas, l.*
       FROM jual j
       LEFT JOIN customer c ON j.idcustomer = c.idcustomer AND c.idtenant = j.idtenant
-      LEFT JOIN kartupiutang kp on kp.kodetrans = j.kodejual and kp.status ='LUNAS' 
+      LEFT JOIN kartupiutang kp on kp.kodetrans = j.kodejual and kp.status ='LUNAS'
+      LEFT JOIN lokasi l on l.idlokasi = j.idlokasi AND l.idtenant = j.idtenant 
       WHERE j.idjual = ? AND j.idlokasi = ?`, [req.params.id, ctx.idlokasi]);
     if (rows.length === 0) return res.status(404).json({ message: 'Transaksi tidak ditemukan' });
 
@@ -303,7 +305,15 @@ exports.update = async (req, res) => {
       "SELECT idkartupiutang FROM kartupiutang WHERE kodetrans = ? AND jenis = 'JUAL' AND status = 'LUNAS' AND idtenant = ? AND idlokasi = ?",
       [oldJual.kodejual, ctx.idtenant, ctx.idlokasi]
     );
-    if (piutangLunas) return res.status(400).json({ message: 'Hapus pelunasan terlebih dahulu sebelum edit' });
+    if (piutangLunas) {
+      // delete dulu pelunasanpiutang nya 
+      await conn.query(`
+        DELETE pp, ppdtl
+        FROM pelunasanpiutang pp 
+        JOIN pelunasanpiutangdtl ppdtl on pp.idpelunasan = ppdtl.idpelunasan
+        WHERE ppdtl.kodetrans = ?
+      `,[oldJual.kodejual]);
+    }
 
     const today = tgltrans || new Date().toISOString().slice(0, 10);
 
@@ -383,6 +393,25 @@ exports.update = async (req, res) => {
       'INSERT INTO kartupiutang (idtenant, idlokasi, idcustomer, kodetrans, jenis, amount, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [ctx.idtenant, ctx.idlokasi, idcustomer || null, oldJual.kodejual, 'JUAL', calculatedGrandTotal, today, 'OPEN']
     );
+
+    if (req.body.langsung_lunas && calculatedGrandTotal > 0 && idcustomer) {
+      const kodepelunasan = await generateKodePelunasanPiutang(conn, ctx.idtenant, ctx.idlokasi);
+      const [pelResult] = await conn.query(
+        'INSERT INTO pelunasanpiutang (idtenant, idlokasi, idcustomer, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [ctx.idtenant, ctx.idlokasi, idcustomer, kodepelunasan, tgltrans, calculatedGrandTotal, req.body.metodbayar || 'TUNAI', `Pelunasan Langsung Transaksi Penjualan ${oldJual.kodejual}`, ctx.iduser]
+      );
+      const idpelunasan = pelResult.insertId;
+
+      await conn.query(
+        'INSERT INTO pelunasanpiutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)',
+        [idpelunasan, oldJual.kodejual, calculatedGrandTotal]
+      );
+
+      await conn.query(
+        "UPDATE kartupiutang SET status = 'LUNAS' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'JUAL'",
+        [oldJual.kodejual, ctx.idtenant, ctx.idlokasi]
+      );
+    }
 
     await conn.commit();
     await logger.history('JUAL_EDIT', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: oldJual.kodejual, detail: { grandtotal: calculatedGrandTotal }, req });
