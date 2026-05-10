@@ -32,13 +32,12 @@ exports.getSummary = async (req, res) => {
   try {
     const ctx = getTenantContext();
     const { idsupplier } = req.params;
-    // Agregasi: total hutang (BELI), total retur, total pelunasan, dan sisa
-    let sql = `SELECT 
+    let sql = `SELECT
         COALESCE(SUM(CASE WHEN jenis = 'BELI' THEN amount ELSE 0 END), 0) as total_hutang,
         COALESCE(SUM(CASE WHEN jenis = 'RETUR' THEN ABS(amount) ELSE 0 END), 0) as total_retur,
-        COALESCE(SUM(CASE WHEN jenis = 'PELUNASAN' THEN ABS(amount) ELSE 0 END), 0) as total_terbayar,
-        COALESCE(SUM(amount), 0) as sisa
-      FROM kartuhutang WHERE idsupplier = ? AND idlokasi = ?`;
+        COALESCE(SUM(terbayar), 0) as total_terbayar,
+        COALESCE(SUM(sisa), 0) as sisa
+      FROM kartuhutang WHERE idsupplier = ? AND idlokasi = ? AND jenis = 'BELI'`;
     const [rows] = await tenantQuery(sql, [idsupplier, ctx.idlokasi]);
     const summary = rows[0] || { total_hutang: 0, total_retur: 0, total_terbayar: 0, sisa: 0 };
     res.json(summary);
@@ -67,30 +66,22 @@ exports.getOpenInvoices = async (req, res) => {
   try {
     const ctx = getTenantContext();
     const { idsupplier } = req.params;
-    // Query invoice OPEN: grup per kodetrans, exclude yang sudah LUNAS, sisa > 0
-    let sql = `SELECT 
-      kh.kodetrans,
-      MAX(kh.tgltrans) as tgltrans,
-      MAX(kh.idsupplier) as idsupplier,
-      MAX(s.namasupplier) as namasupplier,
-      COALESCE(SUM(CASE WHEN kh.jenis = 'BELI' THEN kh.amount ELSE 0 END), 0) as original_amount,
-      COALESCE(SUM(kh.amount), 0) as sisa,
-      COALESCE(SUM(CASE WHEN kh.jenis = 'RETUR' THEN ABS(kh.amount) ELSE 0 END), 0) as total_retur,
-      COALESCE(SUM(CASE WHEN kh.jenis = 'PELUNASAN' THEN ABS(kh.amount) ELSE 0 END), 0) as total_terbayar
-    FROM kartuhutang kh
-    LEFT JOIN supplier s ON kh.idsupplier = s.idsupplier AND s.idtenant = kh.idtenant
-    WHERE kh.idsupplier = ? AND kh.idtenant = ? AND kh.idlokasi = ?
-    AND NOT EXISTS (
-      SELECT 1 FROM kartuhutang kh2
-      WHERE kh2.kodetrans = kh.kodetrans
-        AND kh2.idtenant = kh.idtenant
-        AND kh2.idlokasi = kh.idlokasi
-        AND kh2.jenis = 'BELI'
-        AND kh2.status = 'LUNAS'
-    )
-    GROUP BY kh.kodetrans
-    HAVING COALESCE(SUM(kh.amount), 0) > 0
-    ORDER BY MAX(kh.tgltrans) ASC`;
+    let sql = `SELECT
+                kh.kodetrans,
+                kh.tgltrans,
+                kh.idsupplier,
+                s.namasupplier,
+                kh.amount as original_amount,
+                kh.terbayar,
+                kh.sisa,
+                kh.status
+              FROM kartuhutang kh
+              LEFT JOIN supplier s ON kh.idsupplier = s.idsupplier AND s.idtenant = kh.idtenant
+              WHERE kh.idsupplier = ? AND kh.idtenant = ? AND kh.idlokasi = ?
+                AND kh.jenis = 'BELI'
+                AND kh.status = 'OPEN'
+                AND kh.sisa > 0
+              ORDER BY kh.tgltrans ASC`;
     const rows = await tenantQuery(sql, [idsupplier, ctx.idtenant, ctx.idlokasi]);
     res.json(rows);
   } catch (err) {

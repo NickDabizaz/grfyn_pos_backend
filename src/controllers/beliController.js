@@ -125,10 +125,10 @@ exports.create = async (req, res) => {
     await conn.query(sql10, [calculatedGrandTotal, header.idbeli, ctx.idtenant, idlokasi]);
 
     // Catat ke kartu hutang dengan status OPEN (kewajiban ke supplier)
-    let sql11 = 'INSERT INTO kartuhutang (idtenant, idlokasi, idsupplier, kodetrans, jenis, amount, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+    let sql11 = 'INSERT INTO kartuhutang (idtenant, idlokasi, idsupplier, kodetrans, jenis, amount, terbayar, sisa, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)';
     await conn.query(
       sql11,
-      [ctx.idtenant, idlokasi, idsupplier || null, kodebeli, 'BELI', calculatedGrandTotal, tgltrans, 'OPEN']
+      [ctx.idtenant, idlokasi, idsupplier || null, kodebeli, 'BELI', calculatedGrandTotal, calculatedGrandTotal, tgltrans, 'OPEN']
     );
 
     // Opsi pelunasan langsung: buat transaksi pelunasan hutang otomatis
@@ -148,17 +148,10 @@ exports.create = async (req, res) => {
         [idpelunasan, kodebeli, calculatedGrandTotal]
       );
 
-      // Catat pengurangan hutang di kartuhutang (amount negatif = pelunasan)
-      let sql14 = 'INSERT INTO kartuhutang (idtenant, idlokasi, idsupplier, kodetrans, jenis, kodetransreferensi, amount, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      // Update kartuhutang: set terbayar = amount, sisa = 0, status = LUNAS
+      let sql14 = "UPDATE kartuhutang SET terbayar = amount, sisa = 0, status = 'LUNAS' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ?";
       await conn.query(
         sql14,
-        [ctx.idtenant, idlokasi, idsupplier, kodebeli, 'PELUNASAN', kodepelunasan, -calculatedGrandTotal, tgltrans, 'OPEN']
-      );
-
-      // Tandai hutang beli sebagai LUNAS
-      let sql15 = "UPDATE kartuhutang SET status = 'LUNAS' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'BELI'";
-      await conn.query(
-        sql15,
         [kodebeli, ctx.idtenant, idlokasi]
       );
     }
@@ -367,8 +360,8 @@ if (!beli) return res.status(404).json({ message: 'Pembelian tidak ditemukan' })
         [idpelunasan, kodebeli, calculatedGrandTotal]
       );
 
-      // Tandai hutang beli sebagai LUNAS
-      let sql34 = "UPDATE kartuhutang SET status = 'LUNAS' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'BELI'";
+      // Update kartuhutang: set terbayar = amount, sisa = 0, status = LUNAS
+      let sql34 = "UPDATE kartuhutang SET terbayar = amount, sisa = 0, status = 'LUNAS' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ?";
       await conn.query(
         sql34,
         [kodebeli, ctx.idtenant, idlokasi]

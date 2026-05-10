@@ -492,10 +492,10 @@ exports.importJualBatch = async (req, res) => {
       }
 
       // Insert kartu piutang (status LUNAS)
-      let sqlInsPiut = 'INSERT INTO kartupiutang (idtenant, idlokasi, idcustomer, kodetrans, jenis, amount, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      let sqlInsPiut = 'INSERT INTO kartupiutang (idtenant, idlokasi, idcustomer, kodetrans, jenis, amount, terbayar, sisa, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
       await conn.query(
         sqlInsPiut,
-        [ctx.idtenant, group.idlokasi, group.idcustomer, effectiveKode, 'JUAL', calculatedGrandTotal, group.tgltrans, 'LUNAS']
+        [ctx.idtenant, group.idlokasi, group.idcustomer, effectiveKode, 'JUAL', calculatedGrandTotal, calculatedGrandTotal, 0, group.tgltrans, 'LUNAS']
       );
 
       // Insert jurnal: DEBET KAS, KREDIT PENJUALAN

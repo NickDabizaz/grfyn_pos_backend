@@ -15,6 +15,15 @@ function multiLike(column, raw) {
   return { clause: `(${likes.join(' OR ')})`, params: vals.map(v => `%${v}%`) };
 }
 
+// Helper: membuat klausa IN multi-ID (misal "1,2,3" -> column IN (1,2,3))
+function multiIdIn(column, raw) {
+  const vals = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (!vals.length) return { clause: '', params: [] };
+  if (vals.length === 1) return { clause: `${column} = ?`, params: [vals[0]] };
+  const placeholders = vals.map(() => '?').join(',');
+  return { clause: `${column} IN (${placeholders})`, params: vals };
+}
+
 
 
 // GET /api/laporan/sales-transaksi — Laporan detail transaksi penjualan (per item)
@@ -318,7 +327,10 @@ exports.pembelian = async (req, res) => {
     sql += ' AND b.idlokasi = ?'; params.push(ctx.idlokasi);
     if (tglwal) { sql += ' AND b.tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND b.tgltrans <= ?'; params.push(tglakhir); }
-    if (idsupplier) { sql += ' AND b.idsupplier = ?'; params.push(idsupplier); }
+    if (idsupplier) {
+      const { clause, params: p } = multiIdIn('b.idsupplier', idsupplier);
+      if (clause) { sql += ' AND ' + clause; params.push(...p); }
+    }
     sql += ' ORDER BY b.tgltrans DESC, b.idbeli DESC';
 
     const rows = await tenantQuery(sql, params);
@@ -438,7 +450,10 @@ exports.pembelianPerSupplier = async (req, res) => {
     const conditions = [];
     if (tglwal) { conditions.push('b.tgltrans >= ?'); params.push(tglwal); }
     if (tglakhir) { conditions.push('b.tgltrans <= ?'); params.push(tglakhir); }
-    if (idsupplier) { conditions.push('s.idsupplier = ?'); params.push(idsupplier); }
+    if (idsupplier) {
+      const { clause, params: p } = multiIdIn('s.idsupplier', idsupplier);
+      if (clause) { conditions.push(clause); params.push(...p); }
+    }
     if (conditions.length > 0) { sql += ' AND ' + conditions.join(' AND '); }
     sql += ' WHERE s.idtenant = ? GROUP BY s.idsupplier, s.kodesupplier, s.namasupplier ORDER BY total_pembelian DESC';
     params.push(ctx.idtenant);
@@ -524,7 +539,10 @@ exports.pembelianPerBarang = async (req, res) => {
     const conditions = [];
     if (tglwal) { conditions.push('bl.tgltrans >= ?'); params.push(tglwal); }
     if (tglakhir) { conditions.push('bl.tgltrans <= ?'); params.push(tglakhir); }
-    if (idbarang) { conditions.push('b.idbarang = ?'); params.push(idbarang); }
+    if (idbarang) {
+      const { clause, params: p } = multiIdIn('b.idbarang', idbarang);
+      if (clause) { conditions.push(clause); params.push(...p); }
+    }
     if (conditions.length > 0) { sql += ' WHERE ' + conditions.join(' AND '); }
     sql += ' GROUP BY b.idbarang, b.kodebarang, b.namabarang, b.satuankecil ORDER BY total_nilai DESC';
 
@@ -565,7 +583,10 @@ exports.pembelianRekap = async (req, res) => {
     const params = [ctx.idlokasi];
     if (tglwal) { sql += ' AND tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND tgltrans <= ?'; params.push(tglakhir); }
-    if (idsupplier) { sql += ' AND idsupplier = ?'; params.push(idsupplier); }
+    if (idsupplier) {
+      const { clause, params: p } = multiIdIn('idsupplier', idsupplier);
+      if (clause) { sql += ' AND ' + clause; params.push(...p); }
+    }
 
     const rows = await tenantQuery(sql, params);
 

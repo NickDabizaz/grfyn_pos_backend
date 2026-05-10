@@ -75,17 +75,20 @@ exports.create = async (req, res) => {
       let sql2 = 'INSERT INTO pelunasanhutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)';
       await conn.query(sql2, [idpelunasan, d.kodetrans, d.amount]);
 
-      // Catat pengurangan hutang di kartuhutang (amount negatif)
-      let sql3 = 'INSERT INTO kartuhutang (idtenant, idlokasi, idsupplier, kodetrans, jenis, kodetransreferensi, amount, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql3, [ctx.idtenant, ctx.idlokasi, idsupplier, d.kodetrans, 'PELUNASAN', kodepelunasan, -Math.abs(d.amount), tgltrans, 'OPEN']);
+      // Update kartuhutang: tambahkan terbayar, kurangi sisa
+      let sql3 = 'SELECT amount, terbayar, sisa FROM kartuhutang WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = ?';
+      const [[kh]] = await conn.query(sql3, [d.kodetrans, ctx.idtenant, ctx.idlokasi, 'BELI']);
 
-      // Cek sisa hutang: jika total amount mendekati 0 (selisih < 0.01), tandai LUNAS
-      let sql4 = "SELECT kodetrans, SUM(amount) as sisa FROM kartuhutang WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? GROUP BY kodetrans";
-      const [[hutang]] = await conn.query(sql4, [d.kodetrans, ctx.idtenant, ctx.idlokasi]);
+      if (kh) {
+        const currentTerbayar = parseFloat(kh.terbayar) || 0;
+        const currentSisa = parseFloat(kh.sisa) || 0;
+        const paymentAmount = Math.abs(parseFloat(d.amount));
+        const newTerbayar = currentTerbayar + paymentAmount;
+        const newSisa = currentSisa - paymentAmount;
+        const newStatus = newSisa <= 0 ? 'LUNAS' : 'OPEN';
 
-      if (hutang && Math.abs(parseFloat(hutang.sisa) - Math.abs(d.amount)) < 0.01) {
-        let sql5 = "UPDATE kartuhutang SET status = 'LUNAS' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'BELI'";
-        await conn.query(sql5, [d.kodetrans, ctx.idtenant, ctx.idlokasi]);
+        let sql4 = 'UPDATE kartuhutang SET terbayar = ?, sisa = ?, status = ? WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = ?';
+        await conn.query(sql4, [newTerbayar, newSisa, newStatus, d.kodetrans, ctx.idtenant, ctx.idlokasi, 'BELI']);
       }
     }
 
@@ -117,14 +120,21 @@ exports.remove = async (req, res) => {
     let sql2 = 'SELECT * FROM pelunasanhutangdtl WHERE idpelunasan = ?';
     const [details] = await conn.query(sql2, [id]);
 
-    // Balikkan status setiap transaksi beli yang dilunasi menjadi OPEN kembali
+    // Kembalikan status hutang: kurangi terbayar, tambah sisa
     for (const d of details) {
-      let sql3 = "UPDATE kartuhutang SET status = 'OPEN' WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'BELI'";
-      await conn.query(sql3, [d.kodetrans, ctx.idtenant, ctx.idlokasi]);
+      let sql3 = 'SELECT * FROM kartuhutang WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = ?';
+      const [[kh]] = await conn.query(sql3, [d.kodetrans, ctx.idtenant, ctx.idlokasi, 'BELI']);
 
-      // Hapus entri pelunasan dari kartuhutang
-      let sql4 = "DELETE FROM kartuhutang WHERE kodetransreferensi = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'PELUNASAN'";
-      await conn.query(sql4, [pelunasan.kodepelunasan, ctx.idtenant, ctx.idlokasi]);
+      if (kh) {
+        const currentTerbayar = parseFloat(kh.terbayar) || 0;
+        const currentSisa = parseFloat(kh.sisa) || 0;
+        const paymentAmount = parseFloat(d.amount) || 0;
+        const newTerbayar = Math.max(0, currentTerbayar - paymentAmount);
+        const newSisa = currentSisa + paymentAmount;
+
+        let sql4 = 'UPDATE kartuhutang SET terbayar = ?, sisa = ?, status = ? WHERE kodetrans = ? AND idtenant = ? AND idlokasi = ? AND jenis = ?';
+        await conn.query(sql4, [newTerbayar, newSisa, 'OPEN', d.kodetrans, ctx.idtenant, ctx.idlokasi, 'BELI']);
+      }
     }
 
     // Hapus detail dan header pelunasan

@@ -704,6 +704,8 @@ async function migrate() {
       jenis              VARCHAR(20) NOT NULL,
       kodetransreferensi VARCHAR(30) DEFAULT NULL,
       amount             DECIMAL(15,2) NOT NULL,
+      terbayar           DECIMAL(15,2) DEFAULT 0,
+      sisa               DECIMAL(15,2) NOT NULL,
       tgltrans           DATE NOT NULL,
       status             VARCHAR(20) DEFAULT 'OPEN',
       FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
