@@ -142,9 +142,84 @@ table tfoot td.right {
   color: #A07D30;
 }
 
+/* === Grouping styles for per_barang / per_lokasi reports === */
+
+.group-block {
+  margin-bottom: 24px;
+  page-break-inside: avoid;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #C4683D;
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 0;
+}
+
+.group-header .group-label {
+  background: rgba(255,255,255,0.2);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.group-header .group-title {
+  font-size: 13px;
+  font-weight: 700;
+  flex: 1;
+}
+
+.group-header .group-sub {
+  font-size: 10px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.group-block table {
+  margin-bottom: 0;
+  border-radius: 0 0 6px 6px;
+  overflow: hidden;
+  border: 1px solid #C4683D;
+  border-top: none;
+}
+
+.group-block table thead th {
+  background: #FAEFE5;
+  color: #C4683D;
+}
+
+.group-block table tfoot td {
+  background: #FDF4EF;
+  border-top: 2px solid #C4683D;
+  font-size: 11px;
+}
+
+.grand-total-block {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #C4683D;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+
 @media print {
   body { padding: 10px; }
   .report-header { border-bottom-color: #000; }
   table thead th { background: #333 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   table tfoot td { border-top-color: #000; }
+  .group-header { background: #333 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .grand-total-block { background: #333 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .group-block { page-break-inside: avoid; }
 }

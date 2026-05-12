@@ -1,10 +1,11 @@
 /**
  * Middleware autentikasi JWT.
  * Memvalidasi token dari header Authorization atau query string,
- * memeriksa status user dan token version, lalu menyimpan konteks tenant ke namespace.
+ * memeriksa status user dan token version, lalu menyimpan konteks tenant
+ * ke AsyncLocalStorage sehingga dapat diakses di seluruh call-chain request ini.
  */
 const jwt = require('jsonwebtoken');
-const { pool, getNamespace, TENANT_NS } = require('../config/db');
+const { pool, tenantStorage } = require('../config/db');
 require('dotenv').config();
 
 const auth = async (req, res, next) => {
@@ -28,9 +29,7 @@ const auth = async (req, res, next) => {
 
     // Validasi user masih aktif dan token version cocok (mencegah token lama setelah logout)
     let sql = 'SELECT tokenversion, status FROM user WHERE iduser = ? AND idtenant = ?';
-    const [[user]] = await pool.query(sql,
-      [decoded.iduser, decoded.idtenant]
-    );
+    const [[user]] = await pool.query(sql, [decoded.iduser, decoded.idtenant]);
     if (!user || user.status !== 'AKTIF') {
       return res.status(401).json({ message: 'Akun tidak aktif' });
     }
@@ -38,16 +37,13 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ message: 'Sesi tidak valid. Silakan login ulang.' });
     }
 
-    // Simpan konteks tenant (idtenant, idlokasi, iduser) ke namespace untuk query selanjutnya
-    const ns = getNamespace(TENANT_NS);
-    if (ns) {
-      ns.set('idtenant', decoded.idtenant);
-      ns.set('idlokasi', decoded.idlokasi);
-      ns.set('iduser', decoded.iduser);
-    }
-
     req.user = decoded;
-    next();
+
+    // Simpan konteks tenant ke AsyncLocalStorage agar tersedia di seluruh request chain
+    tenantStorage.run(
+      { idtenant: decoded.idtenant, idlokasi: decoded.idlokasi, iduser: decoded.iduser },
+      () => next()
+    );
   } catch (err) {
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
       return res.status(401).json({ message: 'Token tidak valid atau kadaluarsa' });

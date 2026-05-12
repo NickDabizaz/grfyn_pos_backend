@@ -1,7 +1,7 @@
 /**
  * Entry point aplikasi Grfyn POS Backend.
  * - Setup Express server dengan middleware (CORS, JSON, URL-encoded)
- * - Inisialisasi namespace tenant (cls-hooked) untuk multi-tenancy
+ * - Multi-tenancy context via AsyncLocalStorage (diset di auth middleware per request)
  * - Registrasi semua route API (auth, menu, user, master data, transaksi, laporan, dll)
  * - Setup view engine EJS untuk render laporan HTML dan developer portal
  * - Health check endpoint dan global error handler
@@ -10,7 +10,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { initTenantNamespace, getNamespace, TENANT_NS } = require('./config/db');
+const { initTenantNamespace } = require('./config/db');
 const logger = require('./lib/logger');
 
 // Import semua route module
@@ -41,17 +41,8 @@ const pelunasanhutangRoutes = require('./routes/pelunasanhutang');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Inisialisasi CLS namespace untuk tenant context (harus sebelum middleware)
-initTenantNamespace();
+initTenantNamespace(); // no-op; kept for backward-compat if any module calls it
 logger.cleanOldLogs();
-
-// Middleware: setiap request berjalan dalam konteks namespace tenant
-app.use((req, res, next) => {
-  const ns = getNamespace(TENANT_NS);
-  ns.run(() => {
-    next();
-  });
-});
 
 // Middleware standar
 app.use(cors());

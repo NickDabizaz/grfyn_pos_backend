@@ -14,12 +14,47 @@ exports.create = async (req, res) => {
     await conn.beginTransaction();
     const { idcustomer, bayar, items, jenis } = req.body;
 
-    if (!items || !items.length) return res.status(400).json({ message: 'Items tidak boleh kosong' }); // Validasi: minimal 1 item
-
     // Ambil persentase PPN dari tenant; 0 jika useppn=false, default 11% jika tenant tidak ditemukan
     let sql = 'SELECT ppn FROM tenant WHERE idtenant = ?';
     const [[tenant]] = await conn.query(sql, [ctx.idtenant]);
     const ppnPercent = req.body.useppn === false ? 0 : (tenant ? parseFloat(tenant.ppn) : 11);
+
+    // --- Cek ketersediaan stok sebelum memproses (Pessimistic Lock via FOR UPDATE) ---
+    const idbarangList = items.map(i => i.idbarang);
+    const placeholders = idbarangList.map(() => '?').join(',');
+
+    // Hitung stok bersih (masuk - keluar) per barang di lokasi ini
+    const [stokRows] = await conn.query(
+      `SELECT idbarang,
+         COALESCE(SUM(CASE WHEN jenis='M' THEN jml ELSE 0 END),0) -
+         COALESCE(SUM(CASE WHEN jenis='K' THEN jml ELSE 0 END),0) AS stok_tersedia
+       FROM kartustok
+       WHERE idtenant = ? AND idlokasi = ? AND idbarang IN (${placeholders})
+       GROUP BY idbarang
+       FOR UPDATE`,
+      [ctx.idtenant, ctx.idlokasi, ...idbarangList]
+    );
+
+    const stokMap = {};
+    stokRows.forEach(r => { stokMap[r.idbarang] = Number(r.stok_tersedia); });
+
+    const stokKurang = items.filter(item => {
+      const tersedia = stokMap[item.idbarang] ?? 0;
+      return tersedia < item.jml;
+    });
+
+    if (stokKurang.length > 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: 'Stok tidak mencukupi',
+        details: stokKurang.map(item => ({
+          idbarang : item.idbarang,
+          diminta  : item.jml,
+          tersedia : stokMap[item.idbarang] ?? 0,
+        })),
+      });
+    }
+    // -------------------------------------------------------------------------------
 
     // Generate kode transaksi otomatis berdasarkan tenant & lokasi
     const kodejual = await generateKodeJual(conn, ctx.idtenant, ctx.idlokasi);
@@ -27,48 +62,55 @@ exports.create = async (req, res) => {
 
     // Insert header transaksi jual dengan status awal AKTIF
     let sql2 = 'INSERT INTO jual (idtenant, idlokasi, kodejual, tgltrans, idcustomer, iduser, grandtotal, bayar, kembali, jenis, metodbayar, status, userentry) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?)';
-    await conn.query(sql2, [ctx.idtenant, ctx.idlokasi, kodejual, tgltrans, idcustomer || null, ctx.iduser, bayar || 0, jenis || 'POS', req.body.metodbayar || 'TUNAI', 'AKTIF', ctx.iduser]);
+    const [headerResult] = await conn.query(sql2, [ctx.idtenant, ctx.idlokasi, kodejual, tgltrans, idcustomer || null, ctx.iduser, bayar || 0, jenis || 'POS', req.body.metodbayar || 'TUNAI', 'AKTIF', ctx.iduser]);
+    const idjual = headerResult.insertId;
 
-    // Ambil ID header yang baru dibuat
-    let sql3 = 'SELECT idjual FROM jual WHERE kodejual = ? AND idtenant = ? AND idlokasi = ?';
-    const [[header]] = await conn.query(sql3, [kodejual, ctx.idtenant, ctx.idlokasi]);
+    // Ambil riwayat harga jual untuk semua item dalam satu query (menghindari N+1)
+    const [hargaRows] = await conn.query(
+      `SELECT h1.idbarang, h1.hargajual
+       FROM hargajual h1
+       WHERE h1.idtenant = ? AND h1.idbarang IN (${placeholders})
+         AND h1.idhargajual = (
+           SELECT MAX(h2.idhargajual) FROM hargajual h2
+           WHERE h2.idtenant = h1.idtenant AND h2.idbarang = h1.idbarang
+         )`,
+      [ctx.idtenant, ...idbarangList]
+    );
+    const hargaMap = {};
+    hargaRows.forEach(r => { hargaMap[r.idbarang] = parseFloat(r.hargajual); });
 
-    let calculatedGrandTotal = 0; // Total dihitung ulang dari detail item (validasi server-side)
+    let calculatedGrandTotal = 0;
+    const jualdtlRows   = [];  // Batch insert jualdtl
+    const kartustokRows = [];  // Batch insert kartustok
+    const hargaBaruRows = [];  // Batch insert hargajual (hanya yang berubah)
 
-    // Pre-compile query untuk efisiensi dalam loop
-    let sql4 = 'SELECT hargajual FROM hargajual WHERE idbarang = ? AND idtenant = ? ORDER BY tgltrans DESC, idhargajual DESC LIMIT 1';
-    let sql5 = 'INSERT INTO jualdtl (idjual, idtenant, idbarang, jml, satuan, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-    let sql6 = 'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idref, jenisref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-    let sql7 = 'INSERT INTO hargajual (idtenant, idbarang, hargajual, tgltrans) VALUES (?, ?, ?, ?)';
-
-    // Iterasi tiap item: hitung PPN, diskon, subtotal; catat ke detail & kartu stok
     for (const item of items) {
-      const [[latestJual]] = await conn.query(sql4, [item.idbarang, ctx.idtenant]);
-
-      const harga = parseFloat(item.harga); // Harga satuan jual per item
-
-      // Kalkulasi PPN, diskon, dan subtotal per item
-      const ppnAmount = (harga * item.jml * ppnPercent) / 100;
+      const harga        = parseFloat(item.harga);
+      const ppnAmount    = (harga * item.jml * ppnPercent) / 100;
       const diskonAmount = item.diskon ? (harga * item.jml * item.diskon) / 100 : 0;
-      const subtotal = (harga * item.jml) + ppnAmount - diskonAmount;
+      const subtotal     = (harga * item.jml) + ppnAmount - diskonAmount;
       calculatedGrandTotal += subtotal;
 
-      await conn.query(sql5, [header.idjual, ctx.idtenant, item.idbarang, item.jml, item.satuan, harga, ppnAmount, item.diskon || 0, subtotal]);
+      jualdtlRows.push([idjual, ctx.idtenant, item.idbarang, item.jml, item.satuan, harga, ppnAmount, item.diskon || 0, subtotal]);
+      kartustokRows.push([ctx.idtenant, ctx.idlokasi, kodejual, item.idbarang, item.jml, 'K', tgltrans, `Penjualan ${kodejual}`, idjual, 'jual']);
 
-      // Catat pergerakan stok jenis K (keluar)
-      await conn.query(sql6, [ctx.idtenant, ctx.idlokasi, kodejual, item.idbarang, item.jml, 'K', tgltrans, `Penjualan ${kodejual}`, header.idjual, 'jual']);
-
-      // Catat history harga jual jika berbeda dari harga terakhir
-      if (!latestJual || parseFloat(latestJual.hargajual) !== parseFloat(item.harga)) {
-        await conn.query(sql7, [ctx.idtenant, item.idbarang, parseFloat(item.harga), tgltrans]);
+      if (hargaMap[item.idbarang] === undefined || hargaMap[item.idbarang] !== harga) {
+        hargaBaruRows.push([ctx.idtenant, item.idbarang, harga, tgltrans]);
       }
+    }
+
+    // Batch inserts — satu query per tabel
+    await conn.query('INSERT INTO jualdtl (idjual, idtenant, idbarang, jml, satuan, harga, ppn, diskon, subtotal) VALUES ?', [jualdtlRows]);
+    await conn.query('INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idref, jenisref) VALUES ?', [kartustokRows]);
+    if (hargaBaruRows.length) {
+      await conn.query('INSERT INTO hargajual (idtenant, idbarang, hargajual, tgltrans) VALUES ?', [hargaBaruRows]);
     }
 
     // Hitung kembalian dan tentukan status lunas/aktif
     const calculatedKembali = (bayar || 0) - calculatedGrandTotal; // Bisa negatif jika kurang bayar
     const statusJual = (bayar || 0) >= calculatedGrandTotal ? 'LUNAS' : 'AKTIF';
     let sql8 = 'UPDATE jual SET grandtotal = ?, kembali = ?, status = ? WHERE idjual = ? AND idtenant = ? AND idlokasi = ?';
-    await conn.query(sql8, [calculatedGrandTotal, calculatedKembali, statusJual, header.idjual, ctx.idtenant, ctx.idlokasi]);
+    await conn.query(sql8, [calculatedGrandTotal, calculatedKembali, statusJual, idjual, ctx.idtenant, ctx.idlokasi]);
 
     // Jurnal: DEBET KAS, KREDIT PENJUALAN (jika akun tersedia)
     let sql9 = "SELECT idakun FROM akun WHERE namaakun = 'KAS' AND idtenant = ? LIMIT 1";
@@ -77,11 +119,11 @@ exports.create = async (req, res) => {
     const [[akunJual]] = await conn.query(sql10, [ctx.idtenant]);
     if (akunKas) {
       let sql11 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql11, [ctx.idtenant, ctx.idlokasi, header.idjual, kodejual, 'jual', akunKas.idakun, 'DEBET', calculatedGrandTotal]);
+      await conn.query(sql11, [ctx.idtenant, ctx.idlokasi, idjual, kodejual, 'jual', akunKas.idakun, 'DEBET', calculatedGrandTotal]);
     }
     if (akunJual) {
       let sql12 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql12, [ctx.idtenant, ctx.idlokasi, header.idjual, kodejual, 'jual', akunJual.idakun, 'KREDIT', calculatedGrandTotal]);
+      await conn.query(sql12, [ctx.idtenant, ctx.idlokasi, idjual, kodejual, 'jual', akunJual.idakun, 'KREDIT', calculatedGrandTotal]);
     }
 
     // Catat ke kartu piutang dengan status OPEN (tunggakan customer)
@@ -106,7 +148,7 @@ exports.create = async (req, res) => {
 
     await conn.commit();
     await logger.history('JUAL_CREATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: kodejual, detail: { grandtotal: calculatedGrandTotal }, req });
-    res.status(201).json({ message: 'Transaksi berhasil', kodejual, idjual: header.idjual, grandtotal: calculatedGrandTotal });
+    res.status(201).json({ message: 'Transaksi berhasil', kodejual, idjual, grandtotal: calculatedGrandTotal });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });

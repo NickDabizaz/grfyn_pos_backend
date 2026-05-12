@@ -1,37 +1,25 @@
 /**
  * Konfigurasi koneksi database MySQL dengan multi-tenant support.
- * Menggunakan mysql2/promise untuk async/await dan cls-hooked untuk menyimpan
- * konteks tenant (idtenant, idlokasi, iduser) di Continuation-Local Storage.
+ * Menggunakan mysql2/promise untuk async/await dan AsyncLocalStorage (bawaan Node.js)
+ * untuk menyimpan konteks tenant (idtenant, idlokasi, iduser) per request.
  *
  * Fungsi utama:
  *   pool          — connection pool MySQL
+ *   tenantStorage — AsyncLocalStorage untuk konteks tenant
  *   tenantQuery   — SELECT dengan auto-inject WHERE idtenant = ?
  *   tenantExecute — INSERT/UPDATE/DELETE dengan validasi kolom idtenant
  *   getConnection — mendapatkan koneksi dari pool (untuk transaksi manual)
  */
 const mysql = require('mysql2/promise');
-const { createNamespace, getNamespace } = require('cls-hooked');
+const { AsyncLocalStorage } = require('async_hooks');
 require('dotenv').config();
 
-const TENANT_NS = 'grfyn_tenant';
+// AsyncLocalStorage menggantikan cls-hooked — aman di Node.js >= 12, tidak ada context loss
+const tenantStorage = new AsyncLocalStorage();
 
-let ns = null;
-
-// Inisialisasi namespace CLS untuk menyimpan konteks tenant per request
-function initTenantNamespace() {
-  ns = createNamespace(TENANT_NS);
-  return ns;
-}
-
-// Membaca konteks tenant (idtenant, idlokasi, iduser) dari namespace CLS
+// Membaca konteks tenant (idtenant, idlokasi, iduser) dari AsyncLocalStorage
 function getTenantContext() {
-  const ns = getNamespace(TENANT_NS);
-  if (!ns) return { idtenant: null, idlokasi: null, iduser: null };
-  return {
-    idtenant: ns.get('idtenant'),
-    idlokasi: ns.get('idlokasi'),
-    iduser: ns.get('iduser'),
-  };
+  return tenantStorage.getStore() || { idtenant: null, idlokasi: null, iduser: null };
 }
 
 // Pool koneksi MySQL (config dari environment variable)
@@ -107,13 +95,15 @@ async function getConnection() {
   return pool.getConnection();
 }
 
+// Stub untuk backward-compatibility — AsyncLocalStorage tidak perlu inisialisasi manual
+function initTenantNamespace() {}
+
 module.exports = {
   pool,
+  tenantStorage,
   tenantQuery,
   tenantExecute,
   getConnection,
   getTenantContext,
   initTenantNamespace,
-  getNamespace,
-  TENANT_NS,
 };
