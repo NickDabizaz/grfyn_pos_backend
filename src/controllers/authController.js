@@ -7,6 +7,21 @@ const { pool, getConnection, tenantQuery, tenantExecute, getTenantContext } = re
 require('dotenv').config();
 const logger = require('../lib/logger');
 
+const DEFAULT_COA = [
+  ['1-1001', 'Kas Tunai',               'ASET',        'DEBET'],
+  ['1-1002', 'Bank',                    'ASET',        'DEBET'],
+  ['1-1003', 'Piutang Usaha',           'ASET',        'DEBET'],
+  ['1-1004', 'Persediaan Barang',       'ASET',        'DEBET'],
+  ['2-1001', 'Hutang Usaha',            'LIABILITAS',  'KREDIT'],
+  ['2-1002', 'Hutang Gaji',             'LIABILITAS',  'KREDIT'],
+  ['3-1001', 'Modal',                   'EKUITAS',     'KREDIT'],
+  ['3-1002', 'Laba Ditahan',            'EKUITAS',     'KREDIT'],
+  ['4-1001', 'Pendapatan Penjualan',    'PENDAPATAN',  'KREDIT'],
+  ['5-1001', 'Harga Pokok Penjualan',   'BEBAN',       'DEBET'],
+  ['5-1002', 'Beban Operasional',       'BEBAN',       'DEBET'],
+  ['5-1003', 'Beban Gaji',              'BEBAN',       'DEBET'],
+];
+
 // POST /auth/login — Login user; jika hanya 1 lokasi langsung dapat token, jika banyak pilih lokasi dulu
 exports.login = async (req, res) => {
   try {
@@ -208,6 +223,14 @@ exports.register = async (req, res) => {
     // 6. Assign lokasi default ke user owner
     let sql9 = `INSERT INTO userlokasi (iduser, idlokasi, status, userentry) VALUES (?, ?, 'AKTIF', ?)`;
     await conn.query(sql9, [iduser, idlokasi, iduser]);
+
+    // 7. Seed default Chart of Accounts agar jurnaling berfungsi sejak awal
+    for (const [kode, nama, jenis, saldo] of DEFAULT_COA) {
+      await conn.query(
+        'INSERT IGNORE INTO akun (idtenant, kodeakun, namaakun, jenisak, saldo, status, userentry) VALUES (?,?,?,?,?,?,?)',
+        [idtenant, kode, nama, jenis, saldo, 'AKTIF', 0]
+      );
+    }
 
     await conn.commit();
 

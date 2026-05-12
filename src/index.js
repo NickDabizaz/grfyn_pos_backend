@@ -39,6 +39,15 @@ const pelunasanpiutangRoutes = require('./routes/pelunasanpiutang');
 const kartuhutangRoutes = require('./routes/kartuhutang');
 const pelunasanhutangRoutes = require('./routes/pelunasanhutang');
 const produksiRoutes = require('./routes/produksiRoutes');
+const laporanKeuanganRoutes = require('./routes/laporanKeuangan');
+const transferstokRoutes    = require('./routes/transferstok');
+const shiftRoutes           = require('./routes/shift');
+const purchaseOrderRoutes   = require('./routes/purchaseOrder');
+const grnRoutes             = require('./routes/grn');
+const stockOpnameRoutes     = require('./routes/stockOpname');
+const karyawanRoutes        = require('./routes/karyawan');
+const absensiRoutes         = require('./routes/absensi');
+const payrollRoutes         = require('./routes/payroll');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -88,6 +97,15 @@ app.use('/api/pelunasanpiutang', pelunasanpiutangRoutes);
 app.use('/api/kartuhutang', kartuhutangRoutes);
 app.use('/api/pelunasanhutang', pelunasanhutangRoutes);
 app.use('/api/produksi', produksiRoutes);
+app.use('/api/laporan-keuangan', laporanKeuanganRoutes);
+app.use('/api/transfer-stok', transferstokRoutes);
+app.use('/api/shift', shiftRoutes);
+app.use('/api/purchase-order', purchaseOrderRoutes);
+app.use('/api/grn', grnRoutes);
+app.use('/api/stock-opname', stockOpnameRoutes);
+app.use('/api/karyawan', karyawanRoutes);
+app.use('/api/absensi', absensiRoutes);
+app.use('/api/payroll', payrollRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
