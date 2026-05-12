@@ -75,9 +75,9 @@ exports.create = async (req, res) => {
       const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
 
       // Insert entri jurnal dengan amount absolut
-      let sql4 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      let sql4 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
       await conn.query(sql4,
-        [ctx.idtenant, ctx.idlokasi, idkas, kodekas, 'kas', d.idakun, posisi, Math.abs(d.amount)]
+        [ctx.idtenant, ctx.idlokasi, idkas, kodekas, 'kas', tgltrans, d.idakun, posisi, Math.abs(d.amount)]
       );
     }
 
@@ -122,9 +122,9 @@ exports.update = async (req, res) => {
       const [[akun]] = await conn.query(sql5, [d.idakun, ctx.idtenant]);
       const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
 
-      let sql6 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      let sql6 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
       await conn.query(sql6,
-        [ctx.idtenant, ctx.idlokasi, id, rows[0].kodekas, 'kas', d.idakun, posisi, Math.abs(d.amount)]
+        [ctx.idtenant, ctx.idlokasi, id, rows[0].kodekas, 'kas', rows[0].tgltrans, d.idakun, posisi, Math.abs(d.amount)]
       );
     }
 

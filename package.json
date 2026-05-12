@@ -8,7 +8,8 @@
     "dev": "nodemon src/index.js",
     "migrate": "node src/migrate.js",
     "alter:jual-jenis": "node src/alter-jual-jenis.js",
-    "alter:hpp": "node src/alter-hpp.js"
+    "alter:hpp": "node src/alter-hpp.js",
+    "alter-financial": "node src/alter-financial.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -118,12 +118,12 @@ exports.create = async (req, res) => {
     let sql10 = "SELECT idakun FROM akun WHERE namaakun = 'PENJUALAN' AND idtenant = ? LIMIT 1";
     const [[akunJual]] = await conn.query(sql10, [ctx.idtenant]);
     if (akunKas) {
-      let sql11 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql11, [ctx.idtenant, ctx.idlokasi, idjual, kodejual, 'jual', akunKas.idakun, 'DEBET', calculatedGrandTotal]);
+      let sql11 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      await conn.query(sql11, [ctx.idtenant, ctx.idlokasi, idjual, kodejual, 'jual', tgltrans, akunKas.idakun, 'DEBET', calculatedGrandTotal]);
     }
     if (akunJual) {
-      let sql12 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql12, [ctx.idtenant, ctx.idlokasi, idjual, kodejual, 'jual', akunJual.idakun, 'KREDIT', calculatedGrandTotal]);
+      let sql12 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      await conn.query(sql12, [ctx.idtenant, ctx.idlokasi, idjual, kodejual, 'jual', tgltrans, akunJual.idakun, 'KREDIT', calculatedGrandTotal]);
     }
 
     // Catat ke kartu piutang dengan status OPEN (tunggakan customer)
@@ -474,17 +474,17 @@ exports.update = async (req, res) => {
     const [[akunJual]] = await conn.query(sql46, [ctx.idtenant]);
 
     if (akunKas) {
-      let sql47 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      let sql47 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
       await conn.query(
         sql47,
-        [ctx.idtenant, ctx.idlokasi, oldJual.idjual, oldJual.kodejual, 'jual', akunKas.idakun, 'DEBET', calculatedGrandTotal]
+        [ctx.idtenant, ctx.idlokasi, oldJual.idjual, oldJual.kodejual, 'jual', today, akunKas.idakun, 'DEBET', calculatedGrandTotal]
       );
     }
     if (akunJual) {
-      let sql48 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      let sql48 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
       await conn.query(
         sql48,
-        [ctx.idtenant, ctx.idlokasi, oldJual.idjual, oldJual.kodejual, 'jual', akunJual.idakun, 'KREDIT', calculatedGrandTotal]
+        [ctx.idtenant, ctx.idlokasi, oldJual.idjual, oldJual.kodejual, 'jual', today, akunJual.idakun, 'KREDIT', calculatedGrandTotal]
       );
     }
 

@@ -193,6 +193,56 @@ async function generateKodeProduksi(conn, idtenant, idlokasi) {
   return generateKode(conn, 'PRD', idtenant, idlokasi, 'produksi', 'kodeproduksi');
 }
 
+// Generate kode transfer stok: format TS.KODELOKASI.YYMMDD.NNN
+async function generateKodeTransferStok(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'TS', idtenant, idlokasi, 'transferstok', 'kodetransferstok');
+}
+
+// Generate kode shift kasir: format SH.KODELOKASI.YYMMDD.NNN
+async function generateKodeShift(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'SH', idtenant, idlokasi, 'shift', 'kodeshift');
+}
+
+// Generate kode purchase order: format PO.KODELOKASI.YYMMDD.NNN
+async function generateKodePO(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'PO', idtenant, idlokasi, 'purchaseorder', 'kodepo');
+}
+
+// Generate kode GRN: format GRN.KODELOKASI.YYMMDD.NNN
+async function generateKodeGRN(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'GRN', idtenant, idlokasi, 'grn', 'kodegrn');
+}
+
+// Generate kode stock opname: format SO.KODELOKASI.YYMMDD.NNN
+async function generateKodeStockOpname(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'SO', idtenant, idlokasi, 'stockopname', 'kodestockopname');
+}
+
+// Generate kode payroll: format PAY.KODELOKASI.YYMM.NNN (monthly)
+async function generateKodePayroll(conn, idtenant, idlokasi) {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dateStr = `${yy}${mm}`;
+
+  const [[lokasi]] = await conn.query('SELECT kodelokasi FROM lokasi WHERE idtenant = ? AND idlokasi = ?', [idtenant, idlokasi]);
+  const kdlok = lokasi.kodelokasi;
+  const pattern = `PAY.${kdlok}.${dateStr}.%`;
+
+  await conn.query('LOCK TABLES payroll WRITE');
+  try {
+    const [[{ maxKode }]] = await conn.query(
+      `SELECT MAX(kodepayroll) as maxKode FROM payroll WHERE idtenant = ? AND idlokasi = ? AND kodepayroll LIKE ?`,
+      [idtenant, idlokasi, pattern]
+    );
+    let num = 1;
+    if (maxKode) num = parseInt(maxKode.split('.').pop()) + 1;
+    return `PAY.${kdlok}.${dateStr}.${String(num).padStart(3, '0')}`;
+  } finally {
+    await conn.query('UNLOCK TABLES');
+  }
+}
+
 module.exports = {
   generateKode,
   generateKodeJual,
@@ -209,4 +259,10 @@ module.exports = {
   generateKodePelunasanPiutang,
   generateKodePelunasanHutang,
   generateKodeProduksi,
+  generateKodeTransferStok,
+  generateKodeShift,
+  generateKodePO,
+  generateKodeGRN,
+  generateKodeStockOpname,
+  generateKodePayroll,
 };
