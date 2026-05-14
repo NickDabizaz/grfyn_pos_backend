@@ -44,9 +44,11 @@ exports.create = async (req, res) => {
       calculatedTotal += subtotal;
 
       // Insert detail retur
+      const ppnAmt = parseFloat(item.ppn || 0);
+      const diskon = parseFloat(item.diskon || 0);
       await conn.query(
-        'INSERT INTO returbelidtl (idreturbeli, idtenant, idbarang, satuan, jml, harga, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [header.idreturbeli, ctx.idtenant, item.idbarang, item.satuan || null, item.jml, item.harga || 0, subtotal]
+        'INSERT INTO returbelidtl (idreturbeli, idtenant, idbarang, satuan, jml, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [header.idreturbeli, ctx.idtenant, item.idbarang, item.satuan || null, item.jml, item.harga || 0, ppnAmt, diskon, subtotal]
       );
 
       // Stok keluar: barang dikembalikan ke supplier → kurangi stok
@@ -110,19 +112,29 @@ exports.getAll = async (req, res) => {
 exports.getOne = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    let sql = `SELECT r.*, s.namasupplier
-      FROM returbeli r
-      LEFT JOIN supplier s ON r.idsupplier = s.idsupplier AND s.idtenant = r.idtenant
-      WHERE r.idreturbeli = ? AND r.idtenant = ?`;
-    const rows = await tenantQuery(sql, [req.params.id, ctx.idtenant]);
+    const rows = await tenantQuery(
+      `SELECT r.*, s.namasupplier, s.kodesupplier, s.alamat AS salamat, s.hp AS shp,
+              l.namalokasi, l.kodelokasi
+       FROM returbeli r
+       LEFT JOIN supplier s ON r.idsupplier = s.idsupplier AND s.idtenant = r.idtenant
+       LEFT JOIN lokasi l ON r.idlokasi = l.idlokasi AND l.idtenant = r.idtenant
+       WHERE r.idreturbeli = ? AND r.idtenant = ?`,
+      [req.params.id, ctx.idtenant]
+    );
     if (rows.length === 0) return res.status(404).json({ message: 'Retur pembelian tidak ditemukan' });
 
-    let sql2 = `SELECT rd.*, b.namabarang, b.satuankecil
-      FROM returbelidtl rd
-      LEFT JOIN barang b ON rd.idbarang = b.idbarang AND b.idtenant = rd.idtenant
-      WHERE rd.idreturbeli = ?`;
-    const items = await tenantQuery(sql2, [req.params.id]);
-    res.json({ ...rows[0], items });
+    const items = await tenantQuery(
+      `SELECT rd.*, b.namabarang, b.kodebarang, b.satuanbesar, b.satuansedang, b.satuankecil, b.konversi1, b.konversi2
+       FROM returbelidtl rd
+       LEFT JOIN barang b ON rd.idbarang = b.idbarang AND b.idtenant = rd.idtenant
+       WHERE rd.idreturbeli = ?`,
+      [req.params.id]
+    );
+    const mappedItems = items.map(item => ({
+      ...item,
+      ppn_mode: parseFloat(item.ppn || 0) > 0 ? 'INCLUDE' : 'TIDAK_PAKAI',
+    }));
+    res.json({ ...rows[0], items: mappedItems });
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });

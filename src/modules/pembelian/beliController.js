@@ -37,6 +37,8 @@ exports.create = async (req, res) => {
     const tgltrans   = req.body.tgltrans   || new Date().toISOString().slice(0, 10);
     const kodebeli   = (customKodebeli && customKodebeli.trim()) ? customKodebeli.trim() : await generateKodeBeli(conn, ctx.idtenant, idlokasi);
     const jenistransaksi = langsungLunas ? 'BELI LUNAS' : 'BELI';
+    const idgrn      = req.body.idgrn   || null;
+    const kodegrn    = req.body.kodegrn || null;
 
     if (!idlokasi) {
       await conn.rollback();
@@ -54,11 +56,11 @@ exports.create = async (req, res) => {
 
     // 2. Insert Header Pembelian (Beli)
     const queryInsertHeader = `
-      INSERT INTO beli (idtenant, idlokasi, kodebeli, tgltrans, idsupplier, iduser, grandtotal, bayar, jenistransaksi, status, userentry) 
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'AKTIF', ?)
+      INSERT INTO beli (idtenant, idlokasi, kodebeli, tgltrans, idsupplier, iduser, grandtotal, bayar, jenistransaksi, idgrn, kodegrn, status, userentry)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'AKTIF', ?)
     `;
     await conn.query(queryInsertHeader, [
-      ctx.idtenant, idlokasi, kodebeli, tgltrans, idsupplier, ctx.iduser, 0, jenistransaksi, ctx.iduser
+      ctx.idtenant, idlokasi, kodebeli, tgltrans, idsupplier, ctx.iduser, 0, jenistransaksi, idgrn, kodegrn, ctx.iduser
     ]);
 
     // Ambil ID Header yang baru dibuat
@@ -168,8 +170,8 @@ exports.getAll = async (req, res) => {
   try {
     conn = await getConnection();
     const ctx = getTenantContext();
-    const { tglwal, tglakhir, idsupplier, idlokasi, search } = req.query;
-    
+    const { tglwal, tglakhir, idsupplier, idlokasi, search, available } = req.query;
+
     let sql = `
       SELECT b.*,
              CASE
@@ -177,7 +179,7 @@ exports.getAll = async (req, res) => {
                WHEN b.jenistransaksi = 'PEMBELIAN' THEN 'BELI'
                ELSE COALESCE(b.jenistransaksi, 'BELI')
              END AS jenistransaksi,
-             DATE_FORMAT(b.tgltrans, '%Y-%m-%d') AS tgltrans, 
+             DATE_FORMAT(b.tgltrans, '%Y-%m-%d') AS tgltrans,
              s.namasupplier, l.namalokasi, COALESCE(kh.status, 'BELUMLUNAS') as statuslunas
       FROM beli b
       LEFT JOIN supplier s ON b.idsupplier = s.idsupplier AND s.idtenant = b.idtenant
@@ -188,14 +190,19 @@ exports.getAll = async (req, res) => {
     const params = [ctx.idtenant];
 
     // Filter Dinamis
+    if (available === '1' || available == 1) {
+      sql += ` AND NOT EXISTS (
+        SELECT 1 FROM returbeli rb WHERE rb.idbeli = b.idbeli AND rb.status != 'VOID' AND rb.idtenant = b.idtenant
+      )`;
+    }
     if (idlokasi)   { sql += ' AND b.idlokasi = ?';   params.push(idlokasi); }
     if (tglwal)     { sql += ' AND b.tgltrans >= ?';  params.push(tglwal); }
     if (tglakhir)   { sql += ' AND b.tgltrans <= ?';  params.push(tglakhir); }
     if (idsupplier) { sql += ' AND b.idsupplier = ?'; params.push(idsupplier); }
     if (search)     { sql += ' AND b.kodebeli LIKE ?';params.push(`%${search}%`); }
-    
+
     sql += ' ORDER BY b.tgltrans DESC, b.idbeli DESC LIMIT 200';
-    
+
     const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
@@ -265,6 +272,8 @@ exports.update = async (req, res) => {
     const newIdsupplier  = req.body.idsupplier || null;
     const newTgltrans    = req.body.tgltrans;
     const langsungLunas  = req.body.langsung_lunas === true;
+    const newIdgrn       = req.body.idgrn   || null;
+    const newKodegrn     = req.body.kodegrn || null;
 
     if (!items || !items.length) {
       await conn.rollback();
@@ -313,8 +322,8 @@ exports.update = async (req, res) => {
 
     // 3. Update Header Beli (TERMASUK UPDATE LOKASI & SUPPLIER)
     await conn.query(
-      'UPDATE beli SET tgltrans = ?, idlokasi = ?, idsupplier = ?, jenistransaksi = ? WHERE idbeli = ? AND idtenant = ?', 
-      [tgltrans, idlokasi, newIdsupplier, jenistransaksi, id, ctx.idtenant]
+      'UPDATE beli SET tgltrans = ?, idlokasi = ?, idsupplier = ?, jenistransaksi = ?, idgrn = ?, kodegrn = ? WHERE idbeli = ? AND idtenant = ?',
+      [tgltrans, idlokasi, newIdsupplier, jenistransaksi, newIdgrn, newKodegrn, id, ctx.idtenant]
     );
 
     // 4. Proses Rekonstruksi Detail Items & Stok
