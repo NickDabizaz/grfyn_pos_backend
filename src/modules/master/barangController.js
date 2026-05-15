@@ -101,6 +101,7 @@ exports.browseBarang = async (req, res) => {
   try {
     const ctx = getTenantContext();
     const { search, jenis, excludeJenis } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
     let sql = `SELECT b.*,
       (SELECT hargabeli FROM hargabeli WHERE idbarang = b.idbarang AND idtenant = ? ORDER BY tgltrans DESC, idhargabeli DESC LIMIT 1) as hargabeli_terbaru,
       (SELECT hargajual FROM hargajual WHERE idbarang = b.idbarang AND idtenant = ? ORDER BY tgltrans DESC, idhargajual DESC LIMIT 1) as hargajual_terbaru,
@@ -128,7 +129,8 @@ exports.browseBarang = async (req, res) => {
         params.push(normalizedExcludeJenis);
       }
     }
-    sql += ' GROUP BY b.idbarang ORDER BY b.kodebarang, b.namabarang';
+    sql += ' GROUP BY b.idbarang ORDER BY b.kodebarang, b.namabarang LIMIT ?';
+    params.push(limit);
     const rows = await tenantQuery(sql, params);
     res.json(rows);
   } catch (err) {
