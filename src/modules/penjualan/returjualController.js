@@ -1,21 +1,83 @@
-// Controller untuk transaksi retur penjualan — menangani pengembalian barang dari customer
-// Endpoint: POST /create, GET /getAll, GET /getOne/:id, POST /cancel/:id
-const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
+const { tenantQuery, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeReturJual } = require('../../lib/kodetrans');
 const logger = require('../../lib/logger');
 
-// Daftar tindak lanjut yang valid untuk barang retur
-const VALID_TINDAKLANJUT = ['MASUK_STOK', 'MASUK_STOK_2ND', 'HANGUS'];
+async function calculateAndInsertDetails(conn, { idreturjual, idtenant, items }) {
+  const [[tenant]] = await conn.query('SELECT ppn FROM tenant WHERE idtenant = ?', [idtenant]);
+  const ppnPercent = tenant ? parseFloat(tenant.ppn) : 11;
+  let total = 0;
 
-// POST — Membuat retur penjualan baru. Menyimpan header, detail, pergerakan stok, dan piutang jika ada customer.
+  for (const item of items) {
+    const harga = parseFloat(item.harga || 0);
+    const jml = parseFloat(item.jml || 0);
+    const diskon = parseFloat(item.diskon || 0);
+    const base = harga * jml;
+    const ppn = item.ppn_mode === 'INCLUDE' ? (base * ppnPercent) / 100 : 0;
+    const subtotal = base + ppn - ((base * diskon) / 100);
+    total += subtotal;
+
+    await conn.query(
+      'INSERT INTO returjualdtl (idreturjual, idtenant, idbarang, satuan, jml, harga, ppn, diskon, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [idreturjual, idtenant, item.idbarang, item.satuan || null, jml, harga, ppn, diskon, subtotal]
+    );
+  }
+
+  return total;
+}
+
+async function postApprovedRetur(conn, { idtenant, idlokasi, idcustomer, kodereturjual, kodejual, idreturjual, tgltrans, total }) {
+  const [details] = await conn.query(
+    'SELECT * FROM returjualdtl WHERE idreturjual = ? AND idtenant = ?',
+    [idreturjual, idtenant]
+  );
+
+  for (const item of details) {
+    await conn.query(
+      'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idtrans, jenistransaksi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [idtenant, idlokasi, kodereturjual, item.idbarang, item.jml, 'M', tgltrans, `Retur Penjualan ${kodereturjual}`, idreturjual, 'RETURJUAL']
+    );
+  }
+
+  if (kodejual && idcustomer) {
+    await conn.query(
+      'INSERT INTO kartupiutang (idtenant, idlokasi, idcustomer, kodetrans, jenis, kodetransreferensi, amount, terbayar, sisa, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [idtenant, idlokasi, idcustomer, kodejual, 'RETUR', kodereturjual, -total, 0, -total, tgltrans, 'OPEN']
+    );
+  }
+}
+
+async function deletePostedRetur(conn, { idtenant, idlokasi, kodereturjual }) {
+  await conn.query(
+    "DELETE FROM kartupiutang WHERE kodetransreferensi = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'RETUR'",
+    [kodereturjual, idtenant, idlokasi]
+  );
+  await conn.query(
+    "DELETE FROM kartustok WHERE kodetrans = ? AND jenistransaksi = 'RETURJUAL' AND idtenant = ? AND idlokasi = ?",
+    [kodereturjual, idtenant, idlokasi]
+  );
+}
+
+async function refreshJualReturStatus(conn, { idtenant, idjual }) {
+  if (!idjual) return;
+  const [[activeRetur]] = await conn.query(
+    "SELECT idreturjual FROM returjual WHERE idjual = ? AND idtenant = ? AND status != 'CANCELLED' LIMIT 1",
+    [idjual, idtenant]
+  );
+  await conn.query(
+    "UPDATE jual SET status = ? WHERE idjual = ? AND idtenant = ? AND status IN ('APPROVED', 'CONFIRMED')",
+    [activeRetur ? 'CONFIRMED' : 'APPROVED', idjual, idtenant]
+  );
+}
+
 exports.create = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
     await conn.beginTransaction();
-    const { idcustomer, idlokasi, idjual, kodejual, items, catatan } = req.body;
+    const { idcustomer, idlokasi, idjual, kodejual, items, catatan, tgltrans } = req.body;
+    const approve = req.body.approve === true || req.body.status === 'APPROVED';
+    const status = approve ? 'APPROVED' : 'DRAFT';
 
-    // Validasi: minimal satu item retur
     if (!items || !items.length) {
       await conn.rollback();
       return res.status(400).json({ message: 'Items tidak boleh kosong' });
@@ -29,78 +91,39 @@ exports.create = async (req, res) => {
       return res.status(400).json({ message: 'Lokasi wajib dipilih' });
     }
 
-    // Validasi tiap item: tindaklanjut harus valid dan idbarang2nd wajib jika tindaklanjut MASUK_STOK_2ND
-    for (const item of items) {
-      if (!VALID_TINDAKLANJUT.includes(item.tindaklanjut)) {
-        await conn.rollback();
-        return res.status(400).json({ message: `tindaklanjut tidak valid: ${item.tindaklanjut}` });
-      }
-      if (item.tindaklanjut === 'MASUK_STOK_2ND' && !item.idbarang2nd) {
-        await conn.rollback();
-        return res.status(400).json({ message: 'idbarang2nd wajib diisi untuk tindaklanjut MASUK_STOK_2ND' });
-      }
-    }
-
-    // Generate kode retur unik per lokasi
     const kodereturjual = await generateKodeReturJual(conn, ctx.idtenant, idlokasi);
-    const tgltrans = req.body.tgltrans || new Date().toISOString().slice(0, 10);
+    const tgl = tgltrans || new Date().toISOString().slice(0, 10);
 
-    // Insert header returjual
-    let sql = 'INSERT INTO returjual (idtenant, idlokasi, kodereturjual, tgltrans, idcustomer, idjual, kodejual, iduser, total, catatan, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)';
-    await conn.query(sql,
-      [ctx.idtenant, idlokasi, kodereturjual, tgltrans, idcustomer, idjual || null, kodejual || null, ctx.iduser, catatan || null, 'AKTIF', ctx.iduser]
+    await conn.query(
+      'INSERT INTO returjual (idtenant, idlokasi, kodereturjual, tgltrans, idcustomer, idjual, kodejual, iduser, total, catatan, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)',
+      [ctx.idtenant, idlokasi, kodereturjual, tgl, idcustomer, idjual || null, kodejual || null, ctx.iduser, catatan || null, status, ctx.iduser]
     );
 
-    // Ambil id header yang baru dibuat
-    let sql2 = 'SELECT idreturjual FROM returjual WHERE kodereturjual = ? AND idtenant = ? AND idlokasi = ?';
-    const [[header]] = await conn.query(sql2,
+    const [[header]] = await conn.query(
+      'SELECT idreturjual FROM returjual WHERE kodereturjual = ? AND idtenant = ? AND idlokasi = ?',
       [kodereturjual, ctx.idtenant, idlokasi]
     );
 
-    // Akumulasi total retur dari seluruh item
-    let calculatedTotal = 0;
+    const total = await calculateAndInsertDetails(conn, { idreturjual: header.idreturjual, idtenant: ctx.idtenant, items });
+    await conn.query('UPDATE returjual SET total = ? WHERE idreturjual = ? AND idtenant = ?', [total, header.idreturjual, ctx.idtenant]);
+    await refreshJualReturStatus(conn, { idtenant: ctx.idtenant, idjual });
 
-    for (const item of items) {
-      const subtotal = parseFloat(item.harga || 0) * item.jml;
-      calculatedTotal += subtotal;
-
-      // Insert detail retur per item
-      let sql3 = 'INSERT INTO returjualdtl (idreturjual, idtenant, idbarang, jml, harga, subtotal, tindaklanjut, idbarang2nd) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql3,
-        [header.idreturjual, ctx.idtenant, item.idbarang, item.jml, item.harga || 0, subtotal, item.tindaklanjut, item.idbarang2nd || null]
-      );
-
-      // Pergerakan stok sesuai tindaklanjut: MASUK_STOK → stok normal, MASUK_STOK_2ND → stok second
-      if (item.tindaklanjut === 'MASUK_STOK') {
-        let sql4 = 'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idtrans, jenistransaksi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        await conn.query(sql4,
-          [ctx.idtenant, idlokasi, kodereturjual, item.idbarang, item.jml, 'M', tgltrans, `Retur Penjualan ${kodereturjual}`, header.idreturjual, 'RETURJUAL']
-        );
-      } else if (item.tindaklanjut === 'MASUK_STOK_2ND') {
-        let sql5 = 'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idtrans, jenistransaksi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        await conn.query(sql5,
-          [ctx.idtenant, idlokasi, kodereturjual, item.idbarang2nd, item.jml, 'M', tgltrans, `Retur Penjualan 2nd ${kodereturjual}`, header.idreturjual, 'RETURJUAL']
-        );
-      }
-      // HANGUS: tidak ada pergerakan stok — barang dianggap rusak/hilang
-    }
-
-    // Update total retur di header setelah semua item dihitung
-    let sql6 = 'UPDATE returjual SET total = ? WHERE idreturjual = ? AND idtenant = ?';
-    await conn.query(sql6,
-      [calculatedTotal, header.idreturjual, ctx.idtenant]);
-
-    // Jika retur terkait penjualan & customer, catat pengurang piutang
-    if (kodejual && idcustomer) {
-      let sql7 = 'INSERT INTO kartupiutang (idtenant, idlokasi, idcustomer, kodetrans, jenis, kodetransreferensi, amount, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql7,
-        [ctx.idtenant, idlokasi, idcustomer, kodejual, 'RETUR', kodereturjual, -calculatedTotal, tgltrans, 'OPEN']
-      );
+    if (approve) {
+      await postApprovedRetur(conn, {
+        idtenant: ctx.idtenant,
+        idlokasi,
+        idcustomer,
+        kodereturjual,
+        kodejual,
+        idreturjual: header.idreturjual,
+        tgltrans: tgl,
+        total,
+      });
     }
 
     await conn.commit();
-    await logger.history('RETURJUAL_CREATE', { idtenant: ctx.idtenant, idlokasi, iduser: ctx.iduser, ref: kodereturjual, detail: { total: calculatedTotal }, req });
-    res.status(201).json({ message: 'Retur berhasil dibuat', kodereturjual, idreturjual: header.idreturjual, total: calculatedTotal });
+    await logger.history('RETURJUAL_CREATE', { idtenant: ctx.idtenant, idlokasi, iduser: ctx.iduser, ref: kodereturjual, detail: { total, status }, req });
+    res.status(201).json({ message: 'Retur penjualan berhasil dibuat', kodereturjual, idreturjual: header.idreturjual, total, status });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });
@@ -110,7 +133,78 @@ exports.create = async (req, res) => {
   }
 };
 
-// GET — Mendapatkan daftar retur penjualan dengan filter tanggal, customer, dan pencarian kode
+exports.update = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+    const { idcustomer, idlokasi, idjual, kodejual, items, catatan, tgltrans } = req.body;
+    const approve = req.body.approve === true || req.body.status === 'APPROVED';
+    const status = approve ? 'APPROVED' : 'DRAFT';
+
+    if (!items || !items.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Items tidak boleh kosong' });
+    }
+    if (!idcustomer) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Customer wajib dipilih' });
+    }
+    if (!idlokasi) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Lokasi wajib dipilih' });
+    }
+
+    const [[retur]] = await conn.query('SELECT * FROM returjual WHERE idreturjual = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!retur) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Retur penjualan tidak ditemukan' });
+    }
+    if (retur.status === 'CANCELLED') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Retur penjualan sudah dibatalkan' });
+    }
+    if (retur.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Retur Penjualan DRAFT yang bisa diedit' });
+    }
+
+    const tgl = tgltrans || String(retur.tgltrans).slice(0, 10);
+    await conn.query('DELETE FROM returjualdtl WHERE idreturjual = ? AND idtenant = ?', [id, ctx.idtenant]);
+    const total = await calculateAndInsertDetails(conn, { idreturjual: id, idtenant: ctx.idtenant, items });
+    await conn.query(
+      'UPDATE returjual SET tgltrans = ?, idlokasi = ?, idcustomer = ?, idjual = ?, kodejual = ?, total = ?, catatan = ?, status = ? WHERE idreturjual = ? AND idtenant = ?',
+      [tgl, idlokasi, idcustomer, idjual || null, kodejual || null, total, catatan || null, status, id, ctx.idtenant]
+    );
+    await refreshJualReturStatus(conn, { idtenant: ctx.idtenant, idjual: retur.idjual });
+    await refreshJualReturStatus(conn, { idtenant: ctx.idtenant, idjual });
+
+    if (approve) {
+      await postApprovedRetur(conn, {
+        idtenant: ctx.idtenant,
+        idlokasi,
+        idcustomer,
+        kodereturjual: retur.kodereturjual,
+        kodejual,
+        idreturjual: id,
+        tgltrans: tgl,
+        total,
+      });
+    }
+
+    await conn.commit();
+    await logger.history('RETURJUAL_UPDATE', { idtenant: ctx.idtenant, idlokasi, iduser: ctx.iduser, ref: retur.kodereturjual, detail: { total, status }, req });
+    res.json({ message: 'Retur penjualan berhasil diupdate', total, status });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
 exports.getAll = async (req, res) => {
   try {
     const ctx = getTenantContext();
@@ -120,46 +214,59 @@ exports.getAll = async (req, res) => {
       LEFT JOIN customer c ON r.idcustomer = c.idcustomer AND c.idtenant = r.idtenant
       WHERE r.idtenant = ?`;
     const params = [ctx.idtenant];
-    if (idlokasi) { sql += ' AND r.idlokasi = ?'; params.push(idlokasi); }
-    if (tglwal) { sql += ' AND r.tgltrans >= ?'; params.push(tglwal); }
-    if (tglakhir) { sql += ' AND r.tgltrans <= ?'; params.push(tglakhir); }
+    if (idlokasi)   { sql += ' AND r.idlokasi = ?'; params.push(idlokasi); }
+    if (tglwal)     { sql += ' AND r.tgltrans >= ?'; params.push(tglwal); }
+    if (tglakhir)   { sql += ' AND r.tgltrans <= ?'; params.push(tglakhir); }
     if (idcustomer) { sql += ' AND r.idcustomer = ?'; params.push(idcustomer); }
-    if (search) { sql += ' AND r.kodereturjual LIKE ?'; params.push(`%${search}%`); }
+    if (search)     { sql += ' AND r.kodereturjual LIKE ?'; params.push(`%${search}%`); }
     sql += ' ORDER BY r.tgltrans DESC, r.idreturjual DESC LIMIT 200';
     const rows = await tenantQuery(sql, params);
-    res.json(rows);
+    res.json(rows.map(row => ({
+      ...row,
+      status: row.status === 'AKTIF' ? 'APPROVED' : row.status,
+    })));
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };
 
-// GET — Mendapatkan detail satu retur penjualan beserta item-itemnya
 exports.getOne = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    let sql = `SELECT r.*, c.namacustomer
-      FROM returjual r
-      LEFT JOIN customer c ON r.idcustomer = c.idcustomer AND c.idtenant = r.idtenant
-      WHERE r.idreturjual = ? AND r.idtenant = ?`;
-    const rows = await tenantQuery(sql, [req.params.id, ctx.idtenant]);
-    if (rows.length === 0) return res.status(404).json({ message: 'Retur tidak ditemukan' });
+    const rows = await tenantQuery(
+      `SELECT r.*, c.namacustomer, c.kodecustomer, c.alamat AS calamat, c.hp AS chp,
+              l.namalokasi, l.kodelokasi
+       FROM returjual r
+       LEFT JOIN customer c ON r.idcustomer = c.idcustomer AND c.idtenant = r.idtenant
+       LEFT JOIN lokasi l ON r.idlokasi = l.idlokasi AND l.idtenant = r.idtenant
+       WHERE r.idreturjual = ? AND r.idtenant = ?`,
+      [req.params.id, ctx.idtenant]
+    );
+    if (rows.length === 0) return res.status(404).json({ message: 'Retur penjualan tidak ditemukan' });
 
-    let sql2 = `SELECT rd.*, b.namabarang, b.satuankecil,
-        b2.namabarang as namabarang2nd
-      FROM returjualdtl rd
-      LEFT JOIN barang b ON rd.idbarang = b.idbarang AND b.idtenant = rd.idtenant
-      LEFT JOIN barang b2 ON rd.idbarang2nd = b2.idbarang AND b2.idtenant = rd.idtenant
-      WHERE rd.idreturjual = ?`;
-    const items = await tenantQuery(sql2, [req.params.id]);
-    res.json({ ...rows[0], items });
+    const items = await tenantQuery(
+      `SELECT rd.*, b.namabarang, b.kodebarang, b.satuanbesar, b.satuansedang, b.satuankecil, b.konversi1, b.konversi2
+       FROM returjualdtl rd
+       LEFT JOIN barang b ON rd.idbarang = b.idbarang AND b.idtenant = rd.idtenant
+       WHERE rd.idreturjual = ?`,
+      [req.params.id]
+    );
+    const mappedItems = items.map(item => ({
+      ...item,
+      ppn_mode: parseFloat(item.ppn || 0) > 0 ? 'INCLUDE' : 'TIDAK_PAKAI',
+    }));
+    res.json({
+      ...rows[0],
+      status: rows[0].status === 'AKTIF' ? 'APPROVED' : rows[0].status,
+      items: mappedItems,
+    });
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });
   }
 };
 
-// POST — Membatalkan retur penjualan: ubah status ke VOID, balik pergerakan stok, hapus piutang
 exports.cancel = async (req, res) => {
   const conn = await getConnection();
   try {
@@ -167,50 +274,118 @@ exports.cancel = async (req, res) => {
     await conn.beginTransaction();
     const { id } = req.params;
 
-    // Cek keberadaan dan status retur
-    let sql = 'SELECT * FROM returjual WHERE idreturjual = ? AND idtenant = ?';
-    const [[retur]] = await conn.query(sql, [id, ctx.idtenant]);
+    const [[retur]] = await conn.query(
+      'SELECT * FROM returjual WHERE idreturjual = ? AND idtenant = ?',
+      [id, ctx.idtenant]
+    );
     if (!retur) {
       await conn.rollback();
-      return res.status(404).json({ message: 'Retur tidak ditemukan' });
+      return res.status(404).json({ message: 'Retur penjualan tidak ditemukan' });
     }
-    if (retur.status === 'VOID') {
+    if (retur.status === 'CANCELLED') {
       await conn.rollback();
-      return res.status(400).json({ message: 'Retur sudah dibatalkan' });
+      return res.status(400).json({ message: 'Retur penjualan sudah dibatalkan' });
+    }
+    if (retur.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Retur Penjualan APPROVED harus batal approve dulu sebelum dihapus' });
     }
 
-    // Ubah status retur menjadi VOID
-    let sql2 = 'UPDATE returjual SET status = ? WHERE idreturjual = ? AND idtenant = ? AND idlokasi = ?';
-    await conn.query(sql2, ['VOID', id, ctx.idtenant, retur.idlokasi]);
-
-    // Hapus catatan piutang terkait retur ini
-    let sql3 = "DELETE FROM kartupiutang WHERE kodetransreferensi = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'RETUR'";
-    await conn.query(sql3,
-      [retur.kodereturjual, ctx.idtenant, retur.idlokasi]
+    await conn.query(
+      'UPDATE returjual SET status = ? WHERE idreturjual = ? AND idtenant = ? AND idlokasi = ?',
+      ['CANCELLED', id, ctx.idtenant, retur.idlokasi]
     );
-
-    let sql4 = 'SELECT * FROM returjualdtl WHERE idreturjual = ? AND idtenant = ?';
-    const [details] = await conn.query(sql4, [id, ctx.idtenant]);
-    const today = new Date().toISOString().slice(0, 10);
-
-    // Balik semua pergerakan stok dari detail retur (MASUK → KELUAR)
-    for (const dtl of details) {
-      if (dtl.tindaklanjut === 'MASUK_STOK') {
-        let sql5 = 'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idtrans, jenistransaksi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        await conn.query(sql5,
-          [ctx.idtenant, retur.idlokasi, `VOID-${retur.kodereturjual}`, dtl.idbarang, dtl.jml, 'K', today, `Batal Retur ${retur.kodereturjual}`, retur.idreturjual, 'RETURJUAL_VOID']
-        );
-      } else if (dtl.tindaklanjut === 'MASUK_STOK_2ND' && dtl.idbarang2nd) {
-        let sql6 = 'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idtrans, jenistransaksi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        await conn.query(sql6,
-          [ctx.idtenant, retur.idlokasi, `VOID-${retur.kodereturjual}`, dtl.idbarang2nd, dtl.jml, 'K', today, `Batal Retur 2nd ${retur.kodereturjual}`, retur.idreturjual, 'RETURJUAL_VOID']
-        );
-      }
-    }
+    await refreshJualReturStatus(conn, { idtenant: ctx.idtenant, idjual: retur.idjual });
 
     await conn.commit();
     await logger.history('RETURJUAL_CANCEL', { idtenant: ctx.idtenant, idlokasi: retur.idlokasi, iduser: ctx.iduser, ref: retur.kodereturjual, req });
-    res.json({ message: 'Retur berhasil dibatalkan' });
+    res.json({ message: 'Retur penjualan berhasil dibatalkan' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.approve = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[retur]] = await conn.query('SELECT * FROM returjual WHERE idreturjual = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!retur) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Retur penjualan tidak ditemukan' });
+    }
+    if (retur.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Retur Penjualan DRAFT yang bisa di-approve' });
+    }
+
+    await postApprovedRetur(conn, {
+      idtenant: ctx.idtenant,
+      idlokasi: retur.idlokasi,
+      idcustomer: retur.idcustomer,
+      kodereturjual: retur.kodereturjual,
+      kodejual: retur.kodejual,
+      idreturjual: id,
+      tgltrans: retur.tgltrans,
+      total: retur.total,
+    });
+    await conn.query("UPDATE returjual SET status = 'APPROVED' WHERE idreturjual = ? AND idtenant = ?", [id, ctx.idtenant]);
+    await refreshJualReturStatus(conn, { idtenant: ctx.idtenant, idjual: retur.idjual });
+
+    await conn.commit();
+    await logger.history('RETURJUAL_APPROVE', { idtenant: ctx.idtenant, idlokasi: retur.idlokasi, iduser: ctx.iduser, ref: retur.kodereturjual, req });
+    res.json({ message: 'Retur Penjualan berhasil di-approve' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.unapprove = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[retur]] = await conn.query(
+      'SELECT * FROM returjual WHERE idreturjual = ? AND idtenant = ?',
+      [id, ctx.idtenant]
+    );
+    if (!retur) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Retur penjualan tidak ditemukan' });
+    }
+    if (retur.status !== 'APPROVED' && retur.status !== 'AKTIF') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Retur Penjualan APPROVED yang bisa batal approve' });
+    }
+
+    await deletePostedRetur(conn, {
+      idtenant: ctx.idtenant,
+      idlokasi: retur.idlokasi,
+      kodereturjual: retur.kodereturjual,
+    });
+
+    await conn.query(
+      "UPDATE returjual SET status = 'DRAFT' WHERE idreturjual = ? AND idtenant = ?",
+      [id, ctx.idtenant]
+    );
+    await refreshJualReturStatus(conn, { idtenant: ctx.idtenant, idjual: retur.idjual });
+
+    await conn.commit();
+    await logger.history('RETURJUAL_UNAPPROVE', { idtenant: ctx.idtenant, idlokasi: retur.idlokasi, iduser: ctx.iduser, ref: retur.kodereturjual, req });
+    res.json({ message: 'Approve Retur Penjualan dibatalkan' });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });

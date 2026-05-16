@@ -1,14 +1,13 @@
 const router = require('express').Router();
-const ctrl = require('../returjualController');
+const ctrl = require('../salesOrderController');
 const auth = require('../../../middleware/auth');
-const { validateReturJual } = require('../../../middleware/validateRequest');
 
 router.get('/', auth, ctrl.getAll);
 router.get('/:id', auth, ctrl.getOne);
-router.post('/', auth, validateReturJual, ctrl.create);
+router.post('/', auth, ctrl.create);
 router.put('/:id/approve', auth, ctrl.approve);
 router.put('/:id/unapprove', auth, ctrl.unapprove);
-router.put('/:id/cancel', auth, ctrl.cancel);
-router.put('/:id', auth, validateReturJual, ctrl.update);
+router.put('/:id/batal', auth, ctrl.batal);
+router.put('/:id', auth, ctrl.update);
 
 module.exports = router;
