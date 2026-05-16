@@ -583,6 +583,80 @@ exports.cancel = async (req, res) => {
   }
 };
 
+exports.approve = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[beli]] = await conn.query('SELECT * FROM beli WHERE idbeli = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!beli) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Pembelian tidak ditemukan' });
+    }
+    if (beli.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Pembelian DRAFT yang bisa di-approve' });
+    }
+
+    await assertBpbCanBeUsed(conn, { idbpb: beli.idbpb, idtenant: ctx.idtenant, currentIdbeli: id });
+    const [items] = await conn.query('SELECT * FROM belidtl WHERE idbeli = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!items.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Detail pembelian kosong' });
+    }
+
+    await conn.query("DELETE FROM kartustok WHERE idtrans = ? AND jenistransaksi = 'BELI' AND idtenant = ?", [id, ctx.idtenant]);
+
+    for (const item of items) {
+      const [[barangInfo]] = await conn.query('SELECT satuanbesar, satuansedang, satuankecil, konversi1, konversi2 FROM barang WHERE idbarang = ? AND idtenant = ?', [item.idbarang, ctx.idtenant]);
+      const jmlStokKecil = barangInfo ? toKecilJml(parseFloat(item.jml), item.satuan, barangInfo) : parseFloat(item.jml);
+      await conn.query(
+        'INSERT INTO kartustok (idtenant, idlokasi, kodetrans, idbarang, jml, jenis, tgltrans, keterangan, idtrans, jenistransaksi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [ctx.idtenant, beli.idlokasi, beli.kodebeli, item.idbarang, jmlStokKecil, 'M', beli.tgltrans, `Pembelian ${beli.kodebeli}`, id, 'BELI']
+      );
+
+      const harga = parseFloat(item.harga);
+      const [[latestHarga]] = await conn.query("SELECT hargabeli FROM hargabeli WHERE idbarang = ? AND idtenant = ? AND status = 'AKTIF' ORDER BY tgltrans DESC, idhargabeli DESC LIMIT 1", [item.idbarang, ctx.idtenant]);
+      if (!latestHarga || parseFloat(latestHarga.hargabeli) !== harga) {
+        await conn.query('INSERT INTO hargabeli (idtenant, idbarang, hargabeli, tgltrans, idref, koderef, jenisref, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [ctx.idtenant, item.idbarang, harga, beli.tgltrans, id, beli.kodebeli, 'BELI', 'AKTIF']);
+      }
+    }
+
+    const bayarFinal = isAutoLunasBeli(beli) ? parseFloat(beli.grandtotal || 0) : 0;
+    await conn.query("UPDATE beli SET status = 'APPROVED', bayar = ? WHERE idbeli = ? AND idtenant = ?", [bayarFinal, id, ctx.idtenant]);
+
+    await conn.query(
+      'INSERT INTO kartuhutang (idtenant, idlokasi, idsupplier, kodetrans, jenis, amount, terbayar, sisa, tgltrans, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [ctx.idtenant, beli.idlokasi, beli.idsupplier, beli.kodebeli, 'BELI', beli.grandtotal, bayarFinal, Math.max(parseFloat(beli.grandtotal || 0) - bayarFinal, 0), beli.tgltrans, bayarFinal > 0 ? 'LUNAS' : 'OPEN']
+    );
+
+    if (isAutoLunasBeli(beli) && parseFloat(beli.grandtotal || 0) > 0) {
+      const kodepelunasan = await generateKodePelunasanHutang(conn, ctx.idtenant, beli.idlokasi);
+      const [pelResult] = await conn.query(
+        'INSERT INTO pelunasanhutang (idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [ctx.idtenant, beli.idlokasi, beli.idsupplier, kodepelunasan, beli.tgltrans, beli.grandtotal, 'TUNAI', `Pelunasan Langsung Beli ${beli.kodebeli}`, ctx.iduser]
+      );
+      await conn.query('INSERT INTO pelunasanhutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)', [pelResult.insertId, beli.kodebeli, beli.grandtotal]);
+    }
+
+    if (beli.idbpb) {
+      await conn.query("UPDATE bpb SET status = 'CONFIRMED' WHERE idbpb = ? AND idtenant = ?", [beli.idbpb, ctx.idtenant]);
+    }
+
+    await conn.commit();
+    await logger.history('BELI_APPROVE', { idtenant: ctx.idtenant, idlokasi: beli.idlokasi, iduser: ctx.iduser, ref: beli.kodebeli, req });
+    res.json({ message: 'Pembelian berhasil di-approve' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
 exports.unapprove = async (req, res) => {
   const conn = await getConnection();
   try {

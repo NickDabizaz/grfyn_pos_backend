@@ -57,6 +57,18 @@ async function deletePostedRetur(conn, { idtenant, idlokasi, kodereturbeli }) {
   );
 }
 
+async function refreshBeliReturStatus(conn, { idtenant, idbeli }) {
+  if (!idbeli) return;
+  const [[activeRetur]] = await conn.query(
+    "SELECT idreturbeli FROM returbeli WHERE idbeli = ? AND idtenant = ? AND status != 'CANCELLED' LIMIT 1",
+    [idbeli, idtenant]
+  );
+  await conn.query(
+    "UPDATE beli SET status = ? WHERE idbeli = ? AND idtenant = ? AND status IN ('APPROVED', 'CONFIRMED')",
+    [activeRetur ? 'CONFIRMED' : 'APPROVED', idbeli, idtenant]
+  );
+}
+
 exports.create = async (req, res) => {
   const conn = await getConnection();
   try {
@@ -94,6 +106,7 @@ exports.create = async (req, res) => {
 
     const total = await calculateAndInsertDetails(conn, { idreturbeli: header.idreturbeli, idtenant: ctx.idtenant, items });
     await conn.query('UPDATE returbeli SET total = ? WHERE idreturbeli = ? AND idtenant = ?', [total, header.idreturbeli, ctx.idtenant]);
+    await refreshBeliReturStatus(conn, { idtenant: ctx.idtenant, idbeli });
 
     if (approve) {
       await postApprovedRetur(conn, {
@@ -164,6 +177,8 @@ exports.update = async (req, res) => {
       'UPDATE returbeli SET tgltrans = ?, idlokasi = ?, idsupplier = ?, idbeli = ?, kodebeli = ?, total = ?, catatan = ?, status = ? WHERE idreturbeli = ? AND idtenant = ?',
       [tgl, idlokasi, idsupplier, idbeli || null, kodebeli || null, total, catatan || null, status, id, ctx.idtenant]
     );
+    await refreshBeliReturStatus(conn, { idtenant: ctx.idtenant, idbeli: retur.idbeli });
+    await refreshBeliReturStatus(conn, { idtenant: ctx.idtenant, idbeli });
 
     if (approve) {
       await postApprovedRetur(conn, {
@@ -280,10 +295,53 @@ exports.cancel = async (req, res) => {
       'UPDATE returbeli SET status = ? WHERE idreturbeli = ? AND idtenant = ? AND idlokasi = ?',
       ['CANCELLED', id, ctx.idtenant, retur.idlokasi]
     );
+    await refreshBeliReturStatus(conn, { idtenant: ctx.idtenant, idbeli: retur.idbeli });
 
     await conn.commit();
     await logger.history('RETURBELI_CANCEL', { idtenant: ctx.idtenant, idlokasi: retur.idlokasi, iduser: ctx.iduser, ref: retur.kodereturbeli, req });
     res.json({ message: 'Retur pembelian berhasil dibatalkan' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.approve = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[retur]] = await conn.query('SELECT * FROM returbeli WHERE idreturbeli = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!retur) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Retur pembelian tidak ditemukan' });
+    }
+    if (retur.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Retur Pembelian DRAFT yang bisa di-approve' });
+    }
+
+    await postApprovedRetur(conn, {
+      idtenant: ctx.idtenant,
+      idlokasi: retur.idlokasi,
+      idsupplier: retur.idsupplier,
+      kodereturbeli: retur.kodereturbeli,
+      kodebeli: retur.kodebeli,
+      idreturbeli: id,
+      tgltrans: retur.tgltrans,
+      total: retur.total,
+    });
+    await conn.query("UPDATE returbeli SET status = 'APPROVED' WHERE idreturbeli = ? AND idtenant = ?", [id, ctx.idtenant]);
+    await refreshBeliReturStatus(conn, { idtenant: ctx.idtenant, idbeli: retur.idbeli });
+
+    await conn.commit();
+    await logger.history('RETURBELI_APPROVE', { idtenant: ctx.idtenant, idlokasi: retur.idlokasi, iduser: ctx.iduser, ref: retur.kodereturbeli, req });
+    res.json({ message: 'Retur Pembelian berhasil di-approve' });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });
