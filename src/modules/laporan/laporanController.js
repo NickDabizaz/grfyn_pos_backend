@@ -64,7 +64,7 @@ exports.salesTransaksi = async (req, res) => {
       j.kodejual, j.tgltrans, l.namalokasi,
       c.kodecustomer, c.namacustomer,
       b.kodebarang, b.namabarang,
-      jdtl.idjualdtl, jdtl.jml, jdtl.satuan, jdtl.harga, jdtl.ppn, jdtl.subtotal, j.grandtotal, j.jenis,
+      jdtl.idjualdtl, jdtl.jml, jdtl.satuan, jdtl.harga, jdtl.ppn, jdtl.subtotal, j.grandtotal, j.jenistransaksi AS jenis,
       pp.tgltrans AS tglpelunasan, kp.terbayar as amount, kp.sisa
     FROM jual j
       JOIN jualdtl jdtl ON j.idjual = jdtl.idjual AND jdtl.idtenant = j.idtenant
@@ -74,7 +74,7 @@ exports.salesTransaksi = async (req, res) => {
       LEFT JOIN kartupiutang kp ON kp.kodetrans = j.kodejual AND kp.jenis = 'JUAL'
       LEFT JOIN pelunasanpiutangdtl ppdtl ON ppdtl.kodetrans = kp.kodetrans
       LEFT JOIN pelunasanpiutang pp ON pp.idpelunasan = ppdtl.idpelunasan
-    WHERE j.status IN ('AKTIF', 'LUNAS')`; // <-- [FIX]: Sesuaikan status karena di DB bernilai 'LUNAS'
+    WHERE j.status IN ('APPROVED', 'CONFIRMED')`;
     
     const params = [];
 
@@ -222,7 +222,7 @@ exports.salesPerCustomer = async (req, res) => {
       j.kodejual, j.tgltrans, l.namalokasi,
       c.kodecustomer, c.namacustomer,
       b.kodebarang, b.namabarang,
-      jdtl.jml, jdtl.satuan, jdtl.harga, jdtl.ppn, jdtl.subtotal, j.grandtotal, j.jenis,
+      jdtl.jml, jdtl.satuan, jdtl.harga, jdtl.ppn, jdtl.subtotal, j.grandtotal, j.jenistransaksi AS jenis,
       kp.terbayar as amount, kp.sisa
     FROM jual j
       JOIN jualdtl jdtl ON j.idjual = jdtl.idjual AND jdtl.idtenant = j.idtenant
@@ -230,7 +230,7 @@ exports.salesPerCustomer = async (req, res) => {
       JOIN customer c ON c.idcustomer = j.idcustomer AND c.idtenant = j.idtenant
       JOIN barang b ON b.idbarang = jdtl.idbarang AND b.idtenant = j.idtenant
       LEFT JOIN kartupiutang kp ON kp.kodetrans = j.kodejual AND kp.jenis = 'JUAL'
-    WHERE j.idtenant = ? AND j.status IN ('AKTIF', 'LUNAS')`;
+    WHERE j.idtenant = ? AND j.status IN ('APPROVED', 'CONFIRMED')`;
 
     const params = [ctx.idtenant];
 
@@ -348,12 +348,12 @@ exports.salesPerBarang = async (req, res) => {
       // Query detail-level per item penjualan untuk HTML grouping
       let sqlDetail = `
       SELECT b.idbarang, b.kodebarang, b.namabarang, b.satuankecil as satuan,
-        j.kodejual, j.tgltrans, j.jenis, c.namacustomer, l.namalokasi,
+        j.kodejual, j.tgltrans, j.jenistransaksi AS jenis, c.namacustomer, l.namalokasi,
         jd.jml, jd.harga, jd.subtotal,
         kp.sisa
       FROM barang b
         JOIN jualdtl jd ON b.idbarang = jd.idbarang AND b.idtenant = jd.idtenant
-        JOIN jual j ON jd.idjual = j.idjual AND j.idtenant = jd.idtenant AND j.status IN ('AKTIF', 'LUNAS')
+        JOIN jual j ON jd.idjual = j.idjual AND j.idtenant = jd.idtenant AND j.status IN ('APPROVED', 'CONFIRMED')
         LEFT JOIN customer c ON j.idcustomer = c.idcustomer AND c.idtenant = j.idtenant
         LEFT JOIN lokasi l ON j.idlokasi = l.idlokasi AND l.idtenant = j.idtenant
         LEFT JOIN kartupiutang kp ON kp.kodetrans = j.kodejual AND kp.jenis = 'JUAL'
@@ -481,9 +481,9 @@ exports.pembelian = async (req, res) => {
 
     let sql = `SELECT b.*, s.namasupplier FROM beli b
       LEFT JOIN supplier s ON b.idsupplier = s.idsupplier AND s.idtenant = b.idtenant
-      WHERE 1=1 and b.status = 'APPROVED'`;
+      WHERE 1=1 and b.status IN ('APPROVED', 'CONFIRMED')`;
     const params = [];
-    sql += ' AND b.idlokasi = ?'; params.push(ctx.idlokasi);
+    if (ctx.idlokasi) { sql += ' AND b.idlokasi = ?'; params.push(ctx.idlokasi); }
     if (tglwal) { sql += ' AND b.tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND b.tgltrans <= ?'; params.push(tglakhir); }
     if (idsupplier) {
@@ -508,8 +508,9 @@ exports.pembelian = async (req, res) => {
           LEFT JOIN lokasi l ON b.idlokasi = l.idlokasi AND l.idtenant = b.idtenant
           LEFT JOIN belidtl bd ON b.idbeli = bd.idbeli AND bd.idtenant = b.idtenant
           LEFT JOIN barang bg ON bd.idbarang = bg.idbarang AND bg.idtenant = b.idtenant
-        WHERE b.status = 'APPROVED' AND b.idlokasi = ?`;
-      const detailParams = [ctx.idlokasi];
+        WHERE b.status IN ('APPROVED', 'CONFIRMED')`;
+      const detailParams = [];
+      if (ctx.idlokasi) { sqlDetail += ' AND b.idlokasi = ?'; detailParams.push(ctx.idlokasi); }
       if (tglwal) { sqlDetail += ' AND b.tgltrans >= ?'; detailParams.push(tglwal); }
       if (tglakhir) { sqlDetail += ' AND b.tgltrans <= ?'; detailParams.push(tglakhir); }
       if (idsupplier) {
@@ -586,10 +587,10 @@ exports.salesPerLokasi = async (req, res) => {
       // Query detail-level per item penjualan untuk HTML grouping
       let sqlDetail = `
       SELECT l.idlokasi, l.kodelokasi, l.namalokasi,
-        j.kodejual, j.tgltrans, c.namacustomer, j.grandtotal, j.jenis, kp.sisa,
+        j.kodejual, j.tgltrans, c.namacustomer, j.grandtotal, j.jenistransaksi AS jenis, kp.sisa,
         b.kodebarang, b.namabarang, jd.jml, jd.satuan, jd.harga, jd.ppn, jd.subtotal
       FROM lokasi l
-        JOIN jual j ON l.idlokasi = j.idlokasi AND j.idtenant = l.idtenant AND j.status IN ('AKTIF', 'LUNAS')
+        JOIN jual j ON l.idlokasi = j.idlokasi AND j.idtenant = l.idtenant AND j.status IN ('APPROVED', 'CONFIRMED')
         JOIN jualdtl jd ON j.idjual = jd.idjual AND jd.idtenant = j.idtenant
         JOIN barang b ON b.idbarang = jd.idbarang AND b.idtenant = j.idtenant
         LEFT JOIN customer c ON j.idcustomer = c.idcustomer AND c.idtenant = j.idtenant
@@ -688,7 +689,7 @@ exports.salesPerLokasi = async (req, res) => {
       COALESCE(SUM(CASE WHEN kp.sisa <= 0 OR kp.sisa IS NULL THEN j.grandtotal ELSE 0 END), 0) as total_lunas,
       COALESCE(SUM(CASE WHEN kp.sisa > 0 THEN kp.sisa ELSE 0 END), 0) as total_piutang
     FROM lokasi l
-      LEFT JOIN jual j ON l.idlokasi = j.idlokasi AND j.idtenant = l.idtenant AND j.status IN ('AKTIF', 'LUNAS')
+      LEFT JOIN jual j ON l.idlokasi = j.idlokasi AND j.idtenant = l.idtenant AND j.status IN ('APPROVED', 'CONFIRMED')
       LEFT JOIN kartupiutang kp ON kp.kodetrans = j.kodejual AND kp.jenis = 'JUAL'
     WHERE l.idtenant = ?`;
     const params = [ctx.idtenant];
@@ -745,8 +746,9 @@ exports.pembelianPerSupplier = async (req, res) => {
         COUNT(b.idbeli) as total_transaksi,
         COALESCE(SUM(b.grandtotal), 0) as total_pembelian
       FROM supplier s
-      LEFT JOIN beli b ON s.idsupplier = b.idsupplier AND b.idtenant = s.idtenant AND b.idlokasi = ? AND b.status = 'APPROVED'`;
-    const params = [ctx.idlokasi];
+      LEFT JOIN beli b ON s.idsupplier = b.idsupplier AND b.idtenant = s.idtenant AND b.status IN ('APPROVED', 'CONFIRMED')`;
+    const params = [];
+    if (ctx.idlokasi) { sql += ' AND b.idlokasi = ?'; params.push(ctx.idlokasi); }
     if (tglwal) { sql += ' AND b.tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND b.tgltrans <= ?'; params.push(tglakhir); }
     sql += ' WHERE s.idtenant = ?';
@@ -767,12 +769,13 @@ exports.pembelianPerSupplier = async (req, res) => {
         bg.kodebarang, bg.namabarang, bg.satuankecil as satuan,
         bd.jml, bd.harga, bd.ppn, bd.subtotal, b.grandtotal, b.bayar
         FROM supplier s
-          JOIN beli b ON s.idsupplier = b.idsupplier AND b.idtenant = s.idtenant AND b.idlokasi = ? AND b.status = 'APPROVED'
+          JOIN beli b ON s.idsupplier = b.idsupplier AND b.idtenant = s.idtenant AND b.status IN ('APPROVED', 'CONFIRMED')
           JOIN belidtl bd ON b.idbeli = bd.idbeli AND bd.idtenant = b.idtenant
           JOIN barang bg ON bd.idbarang = bg.idbarang AND bg.idtenant = b.idtenant
           JOIN lokasi l ON b.idlokasi = l.idlokasi AND l.idtenant = b.idtenant
         WHERE s.idtenant = ?`;
-      const detailParams = [ctx.idlokasi, ctx.idtenant];
+      const detailParams = [ctx.idtenant];
+      if (ctx.idlokasi) { sqlDetail += ' AND b.idlokasi = ?'; detailParams.push(ctx.idlokasi); }
       if (tglwal) { sqlDetail += ' AND b.tgltrans >= ?'; detailParams.push(tglwal); }
       if (tglakhir) { sqlDetail += ' AND b.tgltrans <= ?'; detailParams.push(tglakhir); }
       if (idsupplier) {
@@ -849,7 +852,7 @@ exports.pembelianPerLokasi = async (req, res) => {
         bg.kodebarang, bg.namabarang, bg.satuankecil as satuan,
         bd.jml, bd.harga, bd.ppn, bd.subtotal
         FROM lokasi l
-        JOIN beli bl ON l.idlokasi = bl.idlokasi AND bl.idtenant = l.idtenant AND bl.status = 'APPROVED'
+        JOIN beli bl ON l.idlokasi = bl.idlokasi AND bl.idtenant = l.idtenant AND bl.status IN ('APPROVED', 'CONFIRMED')
         JOIN belidtl bd ON bl.idbeli = bd.idbeli AND bd.idtenant = bl.idtenant
         JOIN barang bg ON bd.idbarang = bg.idbarang AND bg.idtenant = bl.idtenant
         LEFT JOIN supplier s ON bl.idsupplier = s.idsupplier AND s.idtenant = bl.idtenant
@@ -912,7 +915,7 @@ exports.pembelianPerLokasi = async (req, res) => {
       COUNT(b.idbeli) as total_transaksi,
       COALESCE(SUM(b.grandtotal), 0) as total_pembelian
       FROM lokasi l
-      LEFT JOIN beli b ON l.idlokasi = b.idlokasi AND b.idtenant = l.idtenant AND b.status = 'APPROVED'`;
+      LEFT JOIN beli b ON l.idlokasi = b.idlokasi AND b.idtenant = l.idtenant AND b.status IN ('APPROVED', 'CONFIRMED')`;
     const params = [];
     if (tglwal) { sql += ' AND b.tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND b.tgltrans <= ?'; params.push(tglakhir); }
@@ -942,9 +945,10 @@ exports.pembelianPerBarang = async (req, res) => {
         bd.jml, bd.harga, bd.subtotal
         FROM barang b
         JOIN belidtl bd ON b.idbarang = bd.idbarang AND b.idtenant = bd.idtenant
-        JOIN beli bl ON bd.idbeli = bl.idbeli AND bl.idtenant = bd.idtenant AND bl.idlokasi = ? AND bl.status = 'APPROVED'
+        JOIN beli bl ON bd.idbeli = bl.idbeli AND bl.idtenant = bd.idtenant AND bl.status IN ('APPROVED', 'CONFIRMED')
         LEFT JOIN supplier s ON bl.idsupplier = s.idsupplier AND s.idtenant = bl.idtenant`;
-      const detailParams = [ctx.idlokasi];
+      const detailParams = [];
+      if (ctx.idlokasi) { sqlDetail += ' AND bl.idlokasi = ?'; detailParams.push(ctx.idlokasi); }
       const detailConds = [];
       if (tglwal) { detailConds.push('bl.tgltrans >= ?'); detailParams.push(tglwal); }
       if (tglakhir) { detailConds.push('bl.tgltrans <= ?'); detailParams.push(tglakhir); }
@@ -975,8 +979,9 @@ exports.pembelianPerBarang = async (req, res) => {
       COALESCE(SUM(bd.subtotal), 0) as total_nilai
       FROM barang b
       LEFT JOIN belidtl bd ON b.idbarang = bd.idbarang AND b.idtenant = bd.idtenant
-      LEFT JOIN beli bl ON bd.idbeli = bl.idbeli AND bl.idtenant = bd.idtenant AND bl.idlokasi = ? AND bl.status = 'APPROVED'`;
-    const params = [ctx.idlokasi];
+      LEFT JOIN beli bl ON bd.idbeli = bl.idbeli AND bl.idtenant = bd.idtenant AND bl.status IN ('APPROVED', 'CONFIRMED')`;
+    const params = [];
+    if (ctx.idlokasi) { sql += ' AND bl.idlokasi = ?'; params.push(ctx.idlokasi); }
     const conditions = [];
     if (tglwal) { conditions.push('bl.tgltrans >= ?'); params.push(tglwal); }
     if (tglakhir) { conditions.push('bl.tgltrans <= ?'); params.push(tglakhir); }
@@ -1108,14 +1113,19 @@ exports.kartuStok = async (req, res) => {
     const ctx = getTenantContext();
     const { idbarang, tglwal, tglakhir, jenistransaksi, jenisref } = req.query;
     const format = req.query.format || 'json';
+    const selectedBarangFilter = idbarang ? multiIdIn('ks.idbarang', idbarang) : null;
 
     let sql = `SELECT ks.*, b.kodebarang, b.namabarang, b.satuankecil as satuan
       FROM kartustok ks
       LEFT JOIN barang b ON ks.idbarang = b.idbarang AND b.idtenant = ks.idtenant
       WHERE 1=1`;
     const params = [];
+    sql += ' AND ks.idtenant = ?'; params.push(ctx.idtenant);
     sql += ' AND ks.idlokasi = ?'; params.push(ctx.idlokasi);
-    if (idbarang) { sql += ' AND ks.idbarang = ?'; params.push(idbarang); }
+    if (selectedBarangFilter?.clause) {
+      sql += ` AND ${selectedBarangFilter.clause}`;
+      params.push(...selectedBarangFilter.params);
+    }
     if (tglwal) { sql += ' AND ks.tgltrans >= ?'; params.push(tglwal); }
     if (tglakhir) { sql += ' AND ks.tgltrans <= ?'; params.push(tglakhir); }
     const jenisFilter = jenistransaksi || jenisref;
@@ -1126,15 +1136,93 @@ exports.kartuStok = async (req, res) => {
         params.push(...vals);
       }
     }
-    sql += ' ORDER BY ks.tgltrans ASC, ks.idkartustok ASC';
+    sql += ' ORDER BY b.namabarang ASC, ks.tgltrans ASC, ks.idkartustok ASC';
 
     const rows = await tenantQuery(sql, params);
+    const selectedBarangIds = idbarang ? idbarang.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const barangIds = [...new Set([...selectedBarangIds, ...rows.map(row => String(row.idbarang))])];
+    let latestSaldo = null;
+    let saldoAwalByBarang = {};
+    let barangById = {};
+    const [[lokasi]] = await pool.query(
+      'SELECT namalokasi FROM lokasi WHERE idlokasi = ? AND idtenant = ?',
+      [ctx.idlokasi, ctx.idtenant]
+    );
+
+    const [[latestSaldoRow]] = await pool.query(
+      `SELECT idsaldostok, tgltrans
+       FROM saldostok
+       WHERE idtenant = ? AND idlokasi = ?
+       ORDER BY tgltrans DESC, idsaldostok DESC
+       LIMIT 1`,
+      [ctx.idtenant, ctx.idlokasi]
+    );
+    latestSaldo = latestSaldoRow || null;
+
+    if (barangIds.length) {
+      const barangPlaceholders = barangIds.map(() => '?').join(',');
+      const barangRows = await tenantQuery(
+        `SELECT idbarang, kodebarang, namabarang, satuankecil as satuan
+         FROM barang
+         WHERE idbarang IN (${barangPlaceholders})
+         ORDER BY namabarang`,
+        barangIds
+      );
+      barangById = barangRows.reduce((acc, row) => {
+        acc[String(row.idbarang)] = row;
+        return acc;
+      }, {});
+
+      if (latestSaldo) {
+        const saldoRows = await tenantQuery(
+          `SELECT idbarang, qty
+           FROM saldostokdtl
+           WHERE idsaldostok = ? AND idbarang IN (${barangPlaceholders})`,
+          [latestSaldo.idsaldostok, ...barangIds]
+        );
+        saldoAwalByBarang = saldoRows.reduce((acc, row) => {
+          acc[String(row.idbarang)] = parseFloat(row.qty || 0);
+          return acc;
+        }, {});
+      }
+    }
+
+    const groupedMap = new Map();
+    for (const id of barangIds) {
+      const barang = barangById[String(id)] || rows.find(row => String(row.idbarang) === String(id)) || {};
+      groupedMap.set(String(id), {
+        idbarang: id,
+        kodebarang: barang.kodebarang || '',
+        namabarang: barang.namabarang || '-',
+        satuan: barang.satuan || '',
+        saldoAwal: saldoAwalByBarang[String(id)] || 0,
+        rows: []
+      });
+    }
+    for (const row of rows) {
+      const key = String(row.idbarang);
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, {
+          idbarang: row.idbarang,
+          kodebarang: row.kodebarang || '',
+          namabarang: row.namabarang || '-',
+          satuan: row.satuan || '',
+          saldoAwal: saldoAwalByBarang[key] || 0,
+          rows: []
+        });
+      }
+      groupedMap.get(key).rows.push(row);
+    }
+    const groupedData = Array.from(groupedMap.values()).sort((a, b) => a.namabarang.localeCompare(b.namabarang));
 
     if (format === 'html') {
       let sqlTenantKartu = 'SELECT * FROM tenant WHERE idtenant = ?';
       const [[tenant]] = await pool.query(sqlTenantKartu, [ctx.idtenant]);
       return res.render('laporan_kartu_stok', {
         data: rows,
+        groupedData,
+        periodSaldo: latestSaldo ? latestSaldo.tgltrans : '-',
+        namalokasi: lokasi?.namalokasi || '-',
         tglwal: tglwal || '-', tglakhir: tglakhir || '-',
         namatoko: tenant?.namatenant || 'Grfyn POS',
         alamat: '', hp: '', logo: tenant?.logo || '',
@@ -1142,7 +1230,7 @@ exports.kartuStok = async (req, res) => {
       });
     }
 
-    res.json({ data: rows });
+    res.json({ data: rows, groupedData, periodSaldo: latestSaldo?.tgltrans || null, namalokasi: lokasi?.namalokasi || '-' });
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });

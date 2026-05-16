@@ -6,9 +6,13 @@
   <link rel="stylesheet" href="/reports/laporan_style.css">
   <style>
     @media print { .no-print { display: none; } }
-    table.barang-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 11px; }
+    .barang-section { margin-top: 18px; page-break-inside: avoid; }
+    .barang-title { margin: 0 0 6px 0; font-size: 13px; font-weight: 700; color: #4B3E34; text-transform: uppercase; }
+    table.barang-table { width: 100%; border-collapse: collapse; font-size: 11px; }
     table.barang-table th, table.barang-table td { border: 1px solid #EBE3D9; padding: 6px; }
     table.barang-table th { background: #FAEFE5; color: #4B3E34; font-weight: 600; text-align: center; }
+    table.barang-table tbody tr:nth-child(even) { background: #FCF8F3; }
+    table.barang-table .saldo-awal td { font-weight: 600; background: #FFF9F2; }
     .center { text-align: center; }
     .right { text-align: right; }
   </style>
@@ -25,52 +29,82 @@
     <h3>LAPORAN KARTU STOK</h3>
   </div>
 
+  <%
+    const sections = groupedData || [];
+    const formatQty = function(value) {
+      const number = Number(value || 0);
+      return number.toLocaleString('id-ID', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    };
+    const formatTanggal = function(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleDateString('id-ID');
+    };
+  %>
+
   <div class="report-meta">
     <span>Periode: <span class="periode"><%= tglwal %> s/d <%= tglakhir %></span></span>
     <span>Tanggal Cetak: <%= tglcetak %></span>
   </div>
 
-  <table class="barang-table">
-    <thead>
-      <tr>
-        <th class="center" style="width: 5%;">No</th>
-        <th style="width: 25%;">Nama Barang</th>
-        <th class="right" style="width: 10%;">Masuk</th>
-        <th class="right" style="width: 10%;">Keluar</th>
-        <th class="right" style="width: 15%;">Saldo</th>
-        <th style="width: 35%;">Keterangan</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% 
-        let currentBarangId = null;
-        let saldo = 0;
-        let i = 1;
-        data.forEach(function(row) { 
-          if (currentBarangId !== row.idbarang) {
-            currentBarangId = row.idbarang;
-            // Jika ada saldo awal di masa depan, kita set di sini.
-            // Saat ini flat saldo mulai dari 0 jika tidak ada pre-kalkulasi
-            saldo = 0; 
-          }
-          if (row.jenis === 'M') { saldo += parseInt(row.jml || 0); } else { saldo -= parseInt(row.jml || 0); }
-      %>
-      <tr>
-        <td class="center"><%= i++ %></td>
-        <td><%= row.namabarang %></td>
-        <td class="right"><%= row.jenis === 'M' ? row.jml : '-' %></td>
-        <td class="right"><%= row.jenis === 'K' ? row.jml : '-' %></td>
-        <td class="right"><%= saldo %></td>
-        <td><%= row.keterangan || '-' %> (<%= row.jenistransaksi || '-' %>) - <%= new Date(row.tgltrans).toLocaleDateString('id-ID') %></td>
-      </tr>
-      <% }); %>
-      <% if(data.length === 0) { %>
-      <tr>
-        <td colspan="6" class="center">Tidak ada data transaksi.</td>
-      </tr>
-      <% } %>
-    </tbody>
-  </table>
+  <% if(sections.length === 0) { %>
+    <table class="barang-table" style="margin-top:20px;">
+      <tbody>
+        <tr>
+          <td class="center">Tidak ada data transaksi.</td>
+        </tr>
+      </tbody>
+    </table>
+  <% } %>
+
+  <% sections.forEach(function(section) { %>
+    <div class="barang-section">
+      <h4 class="barang-title"><%= section.namabarang %> (<%= section.kodebarang || '-' %>) - <%= section.satuan || '-' %></h4>
+      <table class="barang-table">
+        <thead>
+          <tr>
+            <th class="center" style="width: 5%;">No</th>
+            <th class="center" style="width: 11%;">Tanggal</th>
+            <th style="width: 15%;">Lokasi</th>
+            <th class="right" style="width: 12%;">Masuk</th>
+            <th class="right" style="width: 12%;">Keluar</th>
+            <th class="right" style="width: 13%;">Saldo</th>
+            <th style="width: 32%;">Keterangan</th>
+          </tr>
+        </thead>
+        <tbody>
+          <%
+            let saldo = Number(section.saldoAwal || 0);
+            let i = 1;
+          %>
+          <tr class="saldo-awal">
+            <td class="center"><%= i++ %></td>
+            <td class="center">-</td>
+            <td><%= namalokasi || '-' %></td>
+            <td class="right">-</td>
+            <td class="right">-</td>
+            <td class="right"><%= formatQty(saldo) %></td>
+            <td>SALDO AWAL</td>
+          </tr>
+          <% section.rows.forEach(function(row) {
+            const jumlah = Number(row.jml || 0);
+            if (row.jenis === 'M') { saldo += jumlah; } else if (row.jenis === 'K') { saldo -= jumlah; }
+          %>
+            <tr>
+              <td class="center"><%= i++ %></td>
+              <td class="center"><%= formatTanggal(row.tgltrans) %></td>
+              <td><%= namalokasi || '-' %></td>
+              <td class="right"><%= row.jenis === 'M' ? formatQty(row.jml) : '-' %></td>
+              <td class="right"><%= row.jenis === 'K' ? formatQty(row.jml) : '-' %></td>
+              <td class="right"><%= formatQty(saldo) %></td>
+              <td><%= row.keterangan || '-' %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% }); %>
 
   <div class="report-footer">
     <p>&copy; <%= namatoko %> - Generated by Grfyn POS</p>
