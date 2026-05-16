@@ -68,12 +68,15 @@ const returBeliSchema = z.object({
   idbeli    : z.number().int().positive().optional().nullable(),
   kodebeli  : z.string().optional().nullable(),
   tgltrans  : z.string().optional(),
-  catatan   : z.string().optional(),
+  catatan   : z.string().optional().nullable(),
+  approve   : z.boolean().optional(),
   items     : z.array(z.object({
     idbarang: z.number().int().positive('idbarang harus bilangan bulat positif'),
     jml     : z.number().positive('jml retur harus > 0'),
     harga   : z.number().nonnegative('harga tidak boleh negatif').optional().default(0),
     satuan  : z.string().optional(),
+    diskon  : z.number().min(0).max(100).optional().default(0),
+    ppn_mode: z.string().optional(),
   })).min(1, 'Minimal 1 item retur diperlukan'),
 });
 
@@ -81,8 +84,9 @@ function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);
     if (!result.success) {
-      const errors = result.error.errors.map(e => ({
-        field  : e.path.join('.'),
+      const zodIssues = result.error?.issues || result.error?.errors || [];
+      const errors = zodIssues.map(e => ({
+        field  : Array.isArray(e.path) ? e.path.join('.') : '',
         message: e.message,
       }));
       return res.status(400).json({ message: 'Validasi gagal', errors });

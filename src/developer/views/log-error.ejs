@@ -30,23 +30,26 @@
     </div>
     <button type="submit" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white px-4 py-2 rounded-lg text-sm transition-colors">Filter</button>
     <% if (selectedFile) { %>
-      <a href="/developer/logs/error/download?file=<%= selectedFile %>" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-2">
+      <a href="/developer/logs/error/download?file=<%= selectedDate %>" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-2">
         <i data-lucide="download" class="w-4 h-4"></i> Download
       </a>
-      <form id="form-delete-log" method="POST" action="/developer/logs/error/delete" class="inline">
-        <input type="hidden" name="file" value="error-<%= selectedFile %>.json">
-        <button type="button" onclick="openLogModal()" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-2">
-          <i data-lucide="trash-2" class="w-4 h-4"></i> Hapus File Ini
-        </button>
-      </form>
+      <button type="button" onclick="openLogModal()" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-2">
+        <i data-lucide="trash-2" class="w-4 h-4"></i> Hapus File Ini
+      </button>
     <% } %>
   </form>
 </div>
 
 <% if (selectedFile) { %>
+  <form id="form-delete-log" method="POST" action="/developer/logs/error/delete" class="hidden">
+    <input type="hidden" name="file" value="<%= selectedFile %>">
+  </form>
+<% } %>
+
+<% if (selectedFile) { %>
   <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
     <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-      <span class="text-sm text-gray-400">File: <span class="text-white font-mono">error-<%= selectedFile %>.json</span> &mdash; <%= totalLines %> entries</span>
+      <span class="text-sm text-gray-400">File: <span class="text-white font-mono"><%= selectedFile %></span> &mdash; <%= totalLines %> entries</span>
       <span class="text-xs text-gray-500">Page <%= currentPage %> / <%= Math.max(1, totalPages) %></span>
     </div>
 
@@ -78,14 +81,76 @@
               </span>
             </button>
             <div id="entry-<%= idx %>" class="hidden border-t border-gray-800 bg-gray-950">
-              <pre class="p-4 text-xs overflow-x-auto leading-relaxed font-mono" id="json-<%= idx %>"></pre>
-              <script>
-                (function(){
-                  var raw = <%- JSON.stringify(line) %>;
-                  var el = document.getElementById('json-<%= idx %>');
-                  if (el) el.innerHTML = syntaxHighlight(JSON.stringify(raw, null, 2));
-                })();
-              </script>
+              <div class="p-4 space-y-4 text-xs">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div>
+                    <div class="text-gray-500 mb-1">Name</div>
+                    <div class="text-gray-200 font-mono"><%= line.name || '-' %></div>
+                  </div>
+                  <div>
+                    <div class="text-gray-500 mb-1">Status / Code</div>
+                    <div class="text-gray-200 font-mono"><%= line.statusCode || '-' %> <%= line.code || '' %></div>
+                  </div>
+                  <div>
+                    <div class="text-gray-500 mb-1">Tenant / User</div>
+                    <div class="text-gray-200 font-mono"><%= line.idtenant || '-' %> / <%= line.iduser || '-' %></div>
+                  </div>
+                  <div>
+                    <div class="text-gray-500 mb-1">Method / Path</div>
+                    <div class="text-orange-300 font-mono break-all"><%= line.method || '-' %> <%= line.path || '' %></div>
+                  </div>
+                </div>
+                <% if (line.sqlMessage || line.sqlState) { %>
+                  <div>
+                    <div class="text-gray-500 mb-1">SQL</div>
+                    <pre class="p-3 rounded bg-black/40 border border-gray-800 text-red-200 overflow-x-auto font-mono"><%= [line.sqlState, line.sqlMessage].filter(Boolean).join(' - ') %></pre>
+                  </div>
+                <% } %>
+                <div>
+                  <div class="flex items-center justify-between gap-3 mb-1">
+                    <div class="text-gray-500">Stack Trace</div>
+                    <button
+                      type="button"
+                      onclick="copyLogText('stack-<%= idx %>', this)"
+                      class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
+                    >
+                      <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                  <pre id="stack-<%= idx %>" class="p-3 rounded bg-black/40 border border-gray-800 text-gray-200 overflow-x-auto whitespace-pre-wrap font-mono"><%= line.stack || 'No stack trace recorded' %></pre>
+                </div>
+                <% if (line.request) { %>
+                  <div>
+                    <div class="flex items-center justify-between gap-3 mb-1">
+                      <div class="text-gray-500">Request</div>
+                      <button
+                        type="button"
+                        onclick="copyLogText('request-<%= idx %>', this)"
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
+                      >
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy</span>
+                      </button>
+                    </div>
+                    <pre id="request-<%= idx %>" class="p-3 rounded bg-black/40 border border-gray-800 text-cyan-100 overflow-x-auto whitespace-pre-wrap font-mono"><%= JSON.stringify(line.request, null, 2) %></pre>
+                  </div>
+                <% } %>
+                <details>
+                  <summary class="cursor-pointer text-gray-400 hover:text-white">Full JSON</summary>
+                  <div class="flex justify-end mt-2">
+                    <button
+                      type="button"
+                      onclick="copyLogText('full-json-<%= idx %>', this)"
+                      class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
+                    >
+                      <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                  <pre id="full-json-<%= idx %>" class="mt-2 p-3 rounded bg-black/40 border border-gray-800 text-gray-300 overflow-x-auto whitespace-pre-wrap font-mono"><%= JSON.stringify(line, null, 2) %></pre>
+                </details>
+              </div>
             </div>
           </div>
         <% }); %>
@@ -133,7 +198,7 @@
       <button type="button" onclick="closeLogModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-sm rounded-lg transition-colors">
         Batal
       </button>
-      <button type="button" onclick="document.getElementById('form-delete-log').submit()" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
+      <button type="button" onclick="submitDeleteLog()" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
         <i data-lucide="trash-2" class="w-4 h-4"></i> Ya, Hapus
       </button>
     </div>
@@ -153,6 +218,10 @@
   }
   function closeLogModal() {
     document.getElementById('modal-delete-log').style.display = 'none';
+  }
+  function submitDeleteLog() {
+    var form = document.getElementById('form-delete-log');
+    if (form) form.submit();
   }
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeLogModal();
@@ -184,6 +253,43 @@
       var icon = ch.querySelector('i');
       if (icon) icon.style.transform = isHidden ? 'rotate(180deg)' : '';
     }
+  }
+
+  function copyLogText(id, button) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var text = el.innerText || el.textContent || '';
+    var done = function(ok) {
+      if (!button) return;
+      var label = button.querySelector('span');
+      var old = label ? label.textContent : '';
+      if (label) label.textContent = ok ? 'Copied' : 'Failed';
+      button.classList.toggle('text-green-400', ok);
+      button.classList.toggle('text-red-400', !ok);
+      setTimeout(function() {
+        if (label) label.textContent = old || 'Copy';
+        button.classList.remove('text-green-400', 'text-red-400');
+      }, 1200);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function() { done(true); }).catch(function() { done(false); });
+      return;
+    }
+
+    var textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      done(document.execCommand('copy'));
+    } catch (_) {
+      done(false);
+    }
+    document.body.removeChild(textarea);
   }
 
   if (typeof lucide !== 'undefined') lucide.createIcons();

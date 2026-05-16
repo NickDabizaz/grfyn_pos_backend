@@ -281,12 +281,18 @@ exports.getOne = async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ message: 'Pembelian tidak ditemukan' });
 
     const queryDetail = `
-      SELECT bd.*, br.namabarang, br.kodebarang, br.satuanbesar, br.satuansedang, br.satuankecil, br.konversi1, br.konversi2
+      SELECT bd.*, br.namabarang, br.kodebarang, br.satuanbesar, br.satuansedang, br.satuankecil, br.konversi1, br.konversi2,
+             COALESCE(SUM(CASE WHEN ks.jenis = 'M' THEN ks.jml ELSE -ks.jml END), 0) AS stok
       FROM belidtl bd
       LEFT JOIN barang br ON bd.idbarang = br.idbarang AND br.idtenant = bd.idtenant
+      LEFT JOIN kartustok ks ON ks.idbarang = bd.idbarang
+        AND ks.idtenant = bd.idtenant
+        AND ks.idlokasi = ?
       WHERE bd.idbeli = ? AND bd.idtenant = ?
+      GROUP BY bd.idbelidtl, bd.idbeli, bd.idtenant, bd.idbarang, bd.jml, bd.harga, bd.ppn, bd.diskon, bd.subtotal, bd.satuan,
+               br.namabarang, br.kodebarang, br.satuanbesar, br.satuansedang, br.satuankecil, br.konversi1, br.konversi2
     `;
-    const items = await tenantQuery(queryDetail, [id, ctx.idtenant]);
+    const items = await tenantQuery(queryDetail, [rows[0].idlokasi, id, ctx.idtenant]);
 
     // Format boolean semu untuk PPN
     const mappedItems = items.map(item => ({

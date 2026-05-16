@@ -47,17 +47,20 @@ exports.errorLog = async (req, res) => {
 
     const totalPages = Math.ceil(totalLines / perPage);
 
+    const selectedDate = selectedFile ? selectedFile.replace(/^error-/, '').replace('.json', '') : null;
+
     res.render('layout', { view: 'log-error',
       title: 'Log Error',
       active: 'logs-error',
       files,
-      selectedFile: selectedFile ? selectedFile.replace('.json', '') : null,
+      selectedFile,
+      selectedDate,
       lines,
       currentPage,
       totalPages,
       totalLines,
       search: search || '',
-      date: date || '',
+      date: date || selectedDate || '',
       deleted: req.query.deleted || null,
       error: req.query.error || null
     });
@@ -67,6 +70,7 @@ exports.errorLog = async (req, res) => {
       active: 'logs-error',
       files: [],
       selectedFile: null,
+      selectedDate: null,
       lines: [],
       currentPage: 1,
       totalPages: 0,

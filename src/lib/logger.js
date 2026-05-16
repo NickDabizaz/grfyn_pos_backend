@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { pool } = require('../config/db');
+const { pool, getTenantContext } = require('../config/db');
 
 const LOG_DIR = path.join(__dirname, '..', '..', 'logs'); // Direktori penyimpanan file log
 
@@ -51,16 +51,41 @@ function cleanOldLogs(retentionDays = 30) {
  */
 async function error(err, context = {}) {
   const { req, idtenant, iduser, path: reqPath, method } = context;
+  const tenantCtx = getTenantContext();
+
+  const redact = (value) => {
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(redact);
+    const hiddenKeys = new Set(['password', 'newpassword', 'oldpassword', 'token', 'authorization']);
+    return Object.fromEntries(Object.entries(value).map(([key, val]) => {
+      if (hiddenKeys.has(String(key).toLowerCase())) return [key, '[REDACTED]'];
+      return [key, redact(val)];
+    }));
+  };
 
   const entry = {
     ts: new Date().toISOString(),       // Timestamp ISO
     level: 'error',
+    name: err?.name || null,
     message: err?.message || String(err),
     stack: err?.stack || null,
-    idtenant: idtenant || null,
-    iduser: iduser || null,
+    code: err?.code || null,
+    errno: err?.errno || null,
+    sqlState: err?.sqlState || null,
+    sqlMessage: err?.sqlMessage || null,
+    statusCode: err?.statusCode || err?.status || null,
+    idtenant: idtenant || tenantCtx?.idtenant || req?.user?.idtenant || null,
+    idlokasi: context.idlokasi || tenantCtx?.idlokasi || req?.user?.idlokasi || null,
+    iduser: iduser || tenantCtx?.iduser || req?.user?.iduser || null,
     path: reqPath || req?.originalUrl || req?.url || null,
-    method: method || req?.method || null
+    method: method || req?.method || null,
+    request: req ? {
+      params: redact(req.params || {}),
+      query: redact(req.query || {}),
+      body: redact(req.body || {}),
+      ip: req.ip || req.socket?.remoteAddress || null,
+      useragent: req.headers?.['user-agent'] || null,
+    } : null,
   };
 
   try {
