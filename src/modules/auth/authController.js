@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const { pool, getConnection, tenantQuery, tenantExecute, getTenantContext } = require('../../config/db');
 require('dotenv').config();
 const logger = require('../../lib/logger');
-const { setConfigValue } = require('../../lib/confighelper');
+const { setConfigValue, getConfigValue } = require('../../lib/confighelper');
 
 const DEFAULT_COA = [
   ['1-1001', 'Kas Tunai',               'ASET',        'DEBET'],
@@ -38,7 +38,8 @@ function signLoginToken(user, loc) {
   );
 }
 
-function buildLoginResponse(user, loc, token) {
+async function buildLoginResponse(user, loc, token) {
+  const pakaiPPN = await getConfigValue(pool, user.idtenant, 'GLOBAL', 'PAKAIPPN');
   return {
     token,
     user: {
@@ -51,6 +52,7 @@ function buildLoginResponse(user, loc, token) {
       namatenant: user.namatenant,
       logo      : user.tenant_logo,
       ppn       : user.ppn,
+      pakaiPPN  : String(pakaiPPN || 'YA').toUpperCase(),
     },
     lokasi: {
       idlokasi  : loc.idlokasi,
@@ -64,16 +66,32 @@ function buildLoginResponse(user, loc, token) {
 // POST /auth/login — Login user; jika hanya 1 lokasi langsung dapat token, jika banyak pilih lokasi dulu
 exports.login = async (req, res) => {
   try {
-    const { username, pass } = req.body;
+    const { username, password, pass } = req.body;
+    const loginPassword = password || pass;
+
+    if (!username || !loginPassword) {
+      return res.status(400).json({ message: 'Username dan password wajib diisi' });
+    }
+
     let sql = 'SELECT u.*, t.namatenant, t.logo as tenant_logo, t.ppn FROM user u JOIN tenant t ON u.idtenant = t.idtenant WHERE u.username = ?';
     const [rows] = await pool.query(sql, [username]);
     // Validasi: cek username ada
     if (rows.length === 0) return res.status(401).json({ message: 'Username tidak ditemukan' });
 
-    const user = rows[0];
-    // Validasi: verifikasi password dengan bcrypt
-    const valid = await bcrypt.compare(pass, user.pass);
-    if (!valid) return res.status(401).json({ message: 'Password salah' });
+    let user = null;
+    for (const row of rows) {
+      const valid = await bcrypt.compare(loginPassword, row.pass);
+      if (valid) {
+        if (user) {
+          return res.status(409).json({
+            message: 'Username ditemukan di lebih dari satu tenant. Hubungi admin untuk membuat username unik.',
+          });
+        }
+        user = row;
+      }
+    }
+
+    if (!user) return res.status(401).json({ message: 'Password salah' });
 
     // Validasi: cek status user aktif
     if (user.status !== 'AKTIF') return res.status(401).json({ message: 'Akun tidak aktif' });
@@ -91,7 +109,7 @@ exports.login = async (req, res) => {
     const token = signLoginToken(user, loc);
 
     await logger.history('LOGIN', { idtenant: user.idtenant, idlokasi: loc.idlokasi, iduser: user.iduser, ref: username, req });
-    return res.json(buildLoginResponse(user, loc, token));
+    return res.json(await buildLoginResponse(user, loc, token));
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });
@@ -122,39 +140,9 @@ exports.selectLocation = async (req, res) => {
     const [[lokasi]] = await pool.query(sql3, [idlokasi, user.idtenant]);
     if (!lokasi) return res.status(404).json({ message: 'Lokasi tidak ditemukan' });
 
-    // Generate JWT token dengan idlokasi yang dipilih
-    const token = jwt.sign(
-      {
-        iduser      : user.iduser,
-        idtenant    : user.idtenant,
-        idlokasi    : lokasi.idlokasi,
-        kodelokasi  : lokasi.kodelokasi,
-        namalokasi  : lokasi.namalokasi,
-        tokenversion: user.tokenversion,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '2h' }
-    );
+    const token = signLoginToken(user, lokasi);
 
-    return res.json({
-      token,
-      user: {
-        iduser    : user.iduser,
-        idtenant  : user.idtenant,
-        username  : user.username,
-        namauser  : user.namauser,
-        email     : user.email,
-        isowner   : user.isowner,
-        namatenant: user.namatenant,
-        logo      : user.tenant_logo,
-        ppn       : user.ppn,
-      },
-      lokasi: {
-        idlokasi  : lokasi.idlokasi,
-        kodelokasi: lokasi.kodelokasi,
-        namalokasi: lokasi.namalokasi,
-      },
-    });
+    return res.json(await buildLoginResponse(user, lokasi, token));
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });
@@ -218,6 +206,7 @@ exports.register = async (req, res) => {
 
     await setConfigValue(conn, idtenant, 'GLOBAL', 'CEKMINUS', 'TIDAK', 1);
     await setConfigValue(conn, idtenant, 'BARANG', 'PAKAIBAHANBAKU', 'YA', 1);
+    await setConfigValue(conn, idtenant, 'GLOBAL', 'PAKAIPPN', 'YA', 1);
 
     await conn.commit();
 
@@ -328,15 +317,13 @@ exports.refresh = async (req, res) => {
       {
         iduser      : user.iduser,
         idtenant    : user.idtenant,
-        idlokasi    : ctx.idlokasi,
-        kodelokasi  : ctx.kodelokasi,
-        namalokasi  : ctx.namalokasi,
         tokenversion: user.tokenversion,
       },
       process.env.JWT_SECRET,
       { expiresIn: '2h' }
     );
 
+    const pakaiPPN = await getConfigValue(pool, user.idtenant, 'GLOBAL', 'PAKAIPPN');
     res.json({
       token,
       user: {
@@ -348,6 +335,7 @@ exports.refresh = async (req, res) => {
         isowner   : user.isowner,
         namatenant: user.namatenant,
         ppn       : user.ppn,
+        pakaiPPN  : String(pakaiPPN || 'YA').toUpperCase(),
       },
     });
   } catch (err) {

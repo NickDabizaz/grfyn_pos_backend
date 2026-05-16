@@ -33,9 +33,17 @@ const validateUserAndContext = async (req, res, next, decoded) => {
 
   req.user = decoded;
 
+  const idlokasi = req.headers['x-lokasi-id']
+    ? parseInt(req.headers['x-lokasi-id'], 10)
+    : decoded.idlokasi
+      ? decoded.idlokasi
+      : req.query.idlokasi
+        ? parseInt(req.query.idlokasi, 10)
+        : null;
+
   // Simpan konteks tenant ke AsyncLocalStorage agar tersedia di seluruh request chain
   tenantStorage.run(
-    { idtenant: decoded.idtenant, idlokasi: decoded.idlokasi, iduser: decoded.iduser },
+    { idtenant: decoded.idtenant, idlokasi, iduser: decoded.iduser },
     () => next()
   );
 };

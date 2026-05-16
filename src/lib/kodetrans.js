@@ -215,9 +215,19 @@ async function generateKodeBPB(conn, idtenant, idlokasi) {
   return generateKode(conn, 'BPB', idtenant, idlokasi, 'bpb', 'kodebpb');
 }
 
-// Generate kode stock opname: format SO.KODELOKASI.YYMMDD.NNN
+// Generate kode stock opname: format SOP.KODELOKASI.YYMMDD.NNN
 async function generateKodeStockOpname(conn, idtenant, idlokasi) {
-  return generateKode(conn, 'SO', idtenant, idlokasi, 'stockopname', 'kodestockopname');
+  return generateKode(conn, 'SOP', idtenant, idlokasi, 'stockopname', 'kodestockopname');
+}
+
+// Generate kode sales order: format SO.KODELOKASI.YYMMDD.NNN
+async function generateKodeSO(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'SO', idtenant, idlokasi, 'salesorder', 'kodeso');
+}
+
+// Generate kode BPK: format BPK.KODELOKASI.YYMMDD.NNN
+async function generateKodeBPK(conn, idtenant, idlokasi) {
+  return generateKode(conn, 'BPK', idtenant, idlokasi, 'bpk', 'kodebpk');
 }
 
 // Generate kode payroll: format PAY.KODELOKASI.YYMM.NNN (monthly)
@@ -267,4 +277,6 @@ module.exports = {
   generateKodeBPB,
   generateKodeStockOpname,
   generateKodePayroll,
+  generateKodeSO,
+  generateKodeBPK,
 };

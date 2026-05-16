@@ -23,7 +23,8 @@ const customerRoutes    = require('./modules/master/routes/customer');
 const supplierRoutes    = require('./modules/master/routes/supplier');
 const jualRoutes        = require('./modules/penjualan/routes/jual');
 const returjualRoutes   = require('./modules/penjualan/routes/returjual');
-const tukarbarangRoutes = require('./modules/penjualan/routes/tukarbarang');
+const salesOrderRoutes  = require('./modules/penjualan/routes/salesOrder');
+const bpkRoutes         = require('./modules/penjualan/routes/bpk');
 const beliRoutes        = require('./modules/pembelian/routes/beli');
 const returbeliRoutes   = require('./modules/pembelian/routes/returbeli');
 const stokRoutes        = require('./modules/stok/routes/stok');
@@ -41,7 +42,7 @@ const pelunasanhutangRoutes = require('./modules/keuangan/routes/pelunasanhutang
 const produksiRoutes = require('./modules/stok/routes/produksiRoutes');
 const laporanKeuanganRoutes = require('./modules/keuangan/routes/laporanKeuangan');
 const transferstokRoutes    = require('./modules/stok/routes/transferstok');
-const shiftRoutes           = require('./modules/pos/routes/shift');
+const posKasirRoutes        = require('./modules/pos/routes/kasir');
 const purchaseOrderRoutes   = require('./modules/pembelian/routes/purchaseOrder');
 const bpbRoutes             = require('./modules/pembelian/routes/bpb');
 const stockOpnameRoutes     = require('./modules/stok/routes/stockOpname');
@@ -81,7 +82,8 @@ app.use('/api/customer', customerRoutes);
 app.use('/api/supplier', supplierRoutes);
 app.use('/api/jual', jualRoutes);
 app.use('/api/returjual', returjualRoutes);
-app.use('/api/tukarbarang', tukarbarangRoutes);
+app.use('/api/sales-order', salesOrderRoutes);
+app.use('/api/bpk-jual', bpkRoutes);
 app.use('/api/beli', beliRoutes);
 app.use('/api/returbeli', returbeliRoutes);
 app.use('/api/stok', stokRoutes);
@@ -99,7 +101,7 @@ app.use('/api/pelunasanhutang', pelunasanhutangRoutes);
 app.use('/api/produksi', produksiRoutes);
 app.use('/api/laporan-keuangan', laporanKeuanganRoutes);
 app.use('/api/transfer-stok', transferstokRoutes);
-app.use('/api/shift', shiftRoutes);
+app.use('/api/pos', posKasirRoutes);
 app.use('/api/purchase-order', purchaseOrderRoutes);
 app.use('/api/bpb', bpbRoutes);
 app.use('/api/stock-opname', stockOpnameRoutes);
@@ -126,8 +128,7 @@ app.use((err, req, res, next) => {
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Grfyn POS Backend running on port ${PORT}`);
-// Developer Portal (hanya aktif jika DEVELOPER_PORTAL_ENABLED !== 'false')
-if (process.env.DEVELOPER_PORTAL_ENABLED !== 'false') {
+  if (process.env.DEVELOPER_PORTAL_ENABLED !== 'false') {
     console.log(`Developer Portal: http://localhost:${PORT}/developer`);
   }
 });

@@ -1,6 +1,8 @@
 // Helper untuk menghitung stok barang per lokasi pada tanggal tertentu.
 // Menggabungkan data dari saldostok (stok awal per periode) dan kartustok (mutasi harian).
 
+const { pool, getTenantContext } = require("../config/db");
+
 /**
  * Menghitung stok suatu barang di suatu lokasi sampai dengan tanggal yang ditentukan.
  * Logika: stok = saldo_stok_terakhir_sebelum_tgl + SUM(mutasi_kartustok_setelah_saldo_sampai_tgl)
@@ -11,20 +13,25 @@
  * @returns {number} Jumlah stok, 0 jika tidak ditemukan
  */
 async function getStok(idbarang, idlokasi, tgl) {
+    const ctx = getTenantContext();
+    const idtenant = ctx.idtenant;
+
     const sql = `
         SELECT idbarang, idlokasi, SUM(jml) AS totalstok
         FROM (
             -- Bagian 1: Ambil saldo stok terakhir sebelum atau pada tanggal tgl
-            SELECT b.idbarang, a.idlokasi, b.jml
+            SELECT b.idbarang, a.idlokasi, b.qty AS jml
             FROM saldostok a
-                JOIN saldostokdtl b ON a.idsaldostok = b.idsaldostok
-            WHERE a.idlokasi = ?
+                JOIN saldostokdtl b ON a.idsaldostok = b.idsaldostok AND b.idtenant = ?
+            WHERE a.idtenant = ?
+              AND a.idlokasi = ?
               AND b.idbarang = ?
               AND a.tgltrans = (
-                  SELECT MAX(a1.tgltrans)           -- Ambil saldo dengan tanggal terbesar <= tgl
+                  SELECT MAX(a1.tgltrans)
                   FROM saldostok a1
-                      JOIN saldostokdtl b1 ON b1.idsaldostok = a1.idsaldostok
-                  WHERE a1.idlokasi = ?
+                      JOIN saldostokdtl b1 ON b1.idsaldostok = a1.idsaldostok AND b1.idtenant = ?
+                  WHERE a1.idtenant = ?
+                    AND a1.idlokasi = ?
                     AND b1.idbarang = ?
                     AND a1.tgltrans <= ?
               )
@@ -32,33 +39,39 @@ async function getStok(idbarang, idlokasi, tgl) {
             UNION ALL
 
             -- Bagian 2: Ambil semua mutasi kartustok setelah saldo terakhir sampai tgl
-            SELECT d.idbarang, d.idlokasi, d.jml
+            SELECT d.idbarang, d.idlokasi, CASE WHEN d.jenis = 'M' THEN d.jml ELSE -d.jml END AS jml
             FROM kartustok d
-            WHERE d.idlokasi = ?
+            WHERE d.idtenant = ?
+              AND d.idlokasi = ?
               AND d.idbarang = ?
               AND d.tgltrans > (
-                  SELECT COALESCE(MAX(a1.tgltrans), '1900-01-01')  -- Jika belum ada saldo, mulai dari awal
+                  SELECT COALESCE(MAX(a1.tgltrans), '1900-01-01')
                   FROM saldostok a1
-                      JOIN saldostokdtl b1 ON b1.idsaldostok = a1.idsaldostok
-                  WHERE a1.idlokasi = ?
+                      JOIN saldostokdtl b1 ON b1.idsaldostok = a1.idsaldostok AND b1.idtenant = ?
+                  WHERE a1.idtenant = ?
+                    AND a1.idlokasi = ?
                     AND b1.idbarang = ?
                     AND a1.tgltrans <= ?
               )
-              AND d.tgltrans <= ?                    -- Batas atas: hanya mutasi sampai tanggal tgl
+              AND d.tgltrans <= ?
         ) stok
         GROUP BY idbarang, idlokasi
     `;
 
     const params = [
-        idlokasi, idbarang,          // WHERE saldostok (bagian 1)
-        idlokasi, idbarang, tgl,     // Subquery saldo (tanggal terbesar <= tgl)
-        idlokasi, idbarang,          // WHERE kartustok (bagian 2)
-        idlokasi, idbarang, tgl,     // Subquery kartu (tanggal saldo terakhir)
-        tgl                          // AND tgltrans <= tgl (batas mutasi)
+        idtenant, idtenant, idlokasi, idbarang,           // Bagian 1 JOIN + WHERE
+        idtenant, idtenant, idlokasi, idbarang, tgl,      // Subquery saldo bagian 1
+        idtenant, idlokasi, idbarang,                     // WHERE kartustok bagian 2
+        idtenant, idtenant, idlokasi, idbarang, tgl,      // Subquery saldo bagian 2
+        tgl,                                              // AND tgltrans <= tgl
     ];
 
-    const [rows] = await db.query(sql, params);
+    const [rows] = await pool.query(sql, params);
 
     if (rows.length === 0) return 0;
-    return rows[0].totalstok ?? 0;   // Nullish coalescing: default 0 jika totalstok null
+    return rows[0].totalstok ?? 0;
+}
+
+module.exports = {
+    getStok,
 }
