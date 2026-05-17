@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const ctrl = require('../settingController');
 const auth = require('../../../middleware/auth');
+const { requireAccess } = require('../../../lib/access');
 const multer = require('multer');
 const path = require('path');
 
@@ -16,8 +17,8 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-router.get('/toko', auth, ctrl.getToko);
-router.put('/toko', auth, ctrl.updateToko);
-router.put('/logo', auth, upload.single('logo'), ctrl.updateLogo);
+router.get('/toko', auth, requireAccess('pos', 'hakakses'), ctrl.getToko);
+router.put('/toko', auth, requireAccess('pos', 'ubah'), ctrl.updateToko);
+router.put('/logo', auth, requireAccess('pos', 'ubah'), upload.single('logo'), ctrl.updateLogo);
 
 module.exports = router;

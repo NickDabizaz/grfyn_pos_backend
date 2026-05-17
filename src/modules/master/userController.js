@@ -11,7 +11,6 @@ function normalizeMenuPayload(menu) {
     return { idmenu: Number(menu), ...fullAccess() };
   }
   const access = normalizeAccess(menu);
-  if (Number(menu?.hakakses || 0) === 1) return { idmenu: Number(menu.idmenu), ...fullAccess() };
   return { idmenu: Number(menu?.idmenu), ...access, hakakses: hasAnyAccess(access) ? 1 : 0 };
 }
 
