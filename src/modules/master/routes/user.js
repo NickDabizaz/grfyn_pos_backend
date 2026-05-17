@@ -16,6 +16,8 @@ router.post('/', auth, ctrl.create);
 router.put('/:id', auth, ctrl.update);
 router.put('/:id/reset-password', auth, ctrl.resetPassword);
 router.get('/:id/menu', auth, ctrl.getMenus);
+router.get('/:id/menus', auth, ctrl.getMenus);
 router.get('/:id/lokasi', auth, ctrl.getLokasis);
+router.get('/:id/lokasis', auth, ctrl.getLokasis);
 
 module.exports = router;

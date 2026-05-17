@@ -1,15 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../../../middleware/auth');
+const { requireAccess, requireApproveWhenRequested } = require('../../../lib/access');
 const ctrl = require('../bpbController');
 
 router.use(auth);
 
-router.get('/', ctrl.getAll);
-router.get('/:id', ctrl.getOne);
-router.post('/', ctrl.create);
-router.put('/:id/approve', ctrl.approve);
-router.put('/:id/unapprove', ctrl.unapprove);
-router.put('/:id', ctrl.update);
+router.get('/', requireAccess('pembelian.bpb', 'hakakses'), ctrl.getAll);
+router.get('/:id', requireAccess('pembelian.bpb', 'hakakses'), ctrl.getOne);
+router.post('/', requireAccess('pembelian.bpb', 'tambah'), requireApproveWhenRequested('pembelian.bpb'), ctrl.create);
+router.put('/:id/approve', requireAccess('pembelian.bpb', 'approve'), ctrl.approve);
+router.put('/:id/unapprove', requireAccess('pembelian.bpb', 'batalapprove'), ctrl.unapprove);
+router.put('/:id', requireAccess('pembelian.bpb', 'ubah'), requireApproveWhenRequested('pembelian.bpb'), ctrl.update);
 
 module.exports = router;

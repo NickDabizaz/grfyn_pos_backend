@@ -191,11 +191,18 @@ async function migrate() {
   // usermenu
   await connection.query(`
     CREATE TABLE usermenu (
-      idusermenu  INT AUTO_INCREMENT PRIMARY KEY,
-      iduser      INT NOT NULL,
-      idmenu      INT NOT NULL,
-      status      VARCHAR(20) DEFAULT 'AKTIF',
-      userentry   INT NOT NULL DEFAULT 0,
+      idusermenu      INT AUTO_INCREMENT PRIMARY KEY,
+      iduser          INT NOT NULL,
+      idmenu          INT NOT NULL,
+      hakakses        TINYINT(1) NOT NULL DEFAULT 1,
+      tambah          TINYINT(1) NOT NULL DEFAULT 0,
+      ubah            TINYINT(1) NOT NULL DEFAULT 0,
+      approve         TINYINT(1) NOT NULL DEFAULT 0,
+      batalapprove    TINYINT(1) NOT NULL DEFAULT 0,
+      bataltransaksi  TINYINT(1) NOT NULL DEFAULT 0,
+      cetak           TINYINT(1) NOT NULL DEFAULT 0,
+      status          VARCHAR(20) DEFAULT 'AKTIF',
+      userentry       INT NOT NULL DEFAULT 0,
       FOREIGN KEY (iduser) REFERENCES user(iduser) ON DELETE CASCADE,
       FOREIGN KEY (idmenu) REFERENCES menu(idmenu),
       UNIQUE KEY uq_usermenu (iduser, idmenu)
@@ -1443,12 +1450,6 @@ async function migrate() {
       m
     );
   }
-
-  // Seed menu — Shift Kasir (parent: pos)
-  await connection.query(
-    'INSERT INTO menu (idmenu, idparent, kodemenu, namamenu, urutan, icon, path) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [36, 2, 'pos.shift', 'Shift Kasir', 2, null, '/pos/shift']
-  );
 
   // Seed menu — SDM parent + children
   await connection.query(

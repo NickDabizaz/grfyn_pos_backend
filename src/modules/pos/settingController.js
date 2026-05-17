@@ -6,6 +6,11 @@ const { pool, tenantExecute, getTenantContext } = require('../../config/db');
 const { getConfigValue, setConfigValue } = require('../../lib/confighelper');
 const logger = require('../../lib/logger');
 
+function upperOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value).toUpperCase();
+}
+
 // GET /api/setting/toko - Membaca data toko dan konfigurasi global tenant
 exports.getToko = async (req, res) => {
   try {
@@ -22,6 +27,8 @@ exports.getToko = async (req, res) => {
     const pakaiPPN = await getConfigValue(pool, ctx.idtenant, 'GLOBAL', 'PAKAIPPN');
     res.json({
       ...tenant,
+      namatenant: upperOrNull(tenant.namatenant) || '',
+      alamat: upperOrNull(tenant.alamat),
       cekminus: String(cekminus || 'TIDAK').toUpperCase(),
       pakaibahanbaku: String(pakaibahanbaku || 'YA').toUpperCase(),
       pakaiPPN: String(pakaiPPN || 'YA').toUpperCase(),
@@ -39,7 +46,14 @@ exports.updateToko = async (req, res) => {
     const { namatenant, alamat, hp, email, ppn, cekminus, pakaibahanbaku, pakaiPPN } = req.body;
     let sql = 'UPDATE tenant SET namatenant = ?, alamat = ?, hp = ?, email = ?, ppn = ? WHERE idtenant = ?';
     // PPN default 11 jika tidak dikirim
-    await tenantExecute(sql, [namatenant, alamat, hp, email, (ppn !== undefined && ppn !== null) ? ppn : 11, ctx.idtenant]);
+    await tenantExecute(sql, [
+      upperOrNull(namatenant) || '',
+      upperOrNull(alamat),
+      hp,
+      email,
+      (ppn !== undefined && ppn !== null) ? ppn : 11,
+      ctx.idtenant,
+    ]);
     await setConfigValue(pool, ctx.idtenant, 'GLOBAL', 'CEKMINUS', cekminus === true || cekminus === 'YA' ? 'YA' : 'TIDAK', 1);
     await setConfigValue(pool, ctx.idtenant, 'BARANG', 'PAKAIBAHANBAKU', pakaibahanbaku === false || pakaibahanbaku === 'TIDAK' ? 'TIDAK' : 'YA', 1);
     await setConfigValue(pool, ctx.idtenant, 'GLOBAL', 'PAKAIPPN', pakaiPPN === false || pakaiPPN === 'TIDAK' ? 'TIDAK' : 'YA', 1);

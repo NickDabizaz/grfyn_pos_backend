@@ -2,8 +2,28 @@
 // Menangani CRUD user, reset password, manajemen menu/lokasi user, dan template menu.
 
 const bcrypt = require('bcryptjs');
-const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
+const { pool, tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
 const logger = require('../../lib/logger');
+const { ACCESS_FIELDS, fullAccess, normalizeAccess, hasAnyAccess } = require('../../lib/access');
+
+function normalizeMenuPayload(menu) {
+  if (typeof menu === 'number' || typeof menu === 'string') {
+    return { idmenu: Number(menu), ...fullAccess() };
+  }
+  const access = normalizeAccess(menu);
+  if (Number(menu?.hakakses || 0) === 1) return { idmenu: Number(menu.idmenu), ...fullAccess() };
+  return { idmenu: Number(menu?.idmenu), ...access, hakakses: hasAnyAccess(access) ? 1 : 0 };
+}
+
+async function insertUserMenu(conn, iduser, menu, userentry) {
+  const normalized = normalizeMenuPayload(menu);
+  if (!normalized.idmenu || !hasAnyAccess(normalized)) return;
+  await conn.query(
+    `INSERT INTO usermenu (iduser, idmenu, hakakses, tambah, ubah, approve, batalapprove, bataltransaksi, cetak, status, userentry)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'AKTIF', ?)`,
+    [iduser, normalized.idmenu, ...ACCESS_FIELDS.map((key) => normalized[key] || 0), userentry]
+  );
+}
 
 // GET /user — Menampilkan semua user dalam tenant beserta jumlah lokasi dan menu yang di-assign
 exports.getAll = async (req, res) => {
@@ -87,11 +107,7 @@ exports.create = async (req, res) => {
         [idtemplate, 'AKTIF']
       );
       for (const d of templateDtl) {
-        let sqlInsMenuTpl = "INSERT INTO usermenu (iduser, idmenu, status, userentry) VALUES (?, ?, 'AKTIF', ?)";
-        await conn.query(
-          sqlInsMenuTpl,
-          [iduser, d.idmenu, ctx.iduser]
-        );
+        await insertUserMenu(conn, iduser, d.idmenu, ctx.iduser);
       }
     }
 
@@ -99,11 +115,7 @@ exports.create = async (req, res) => {
     if (menus && menus.length > 0) {
       for (const idmenu of menus) {
         try {
-          let sqlInsMenu = "INSERT INTO usermenu (iduser, idmenu, status, userentry) VALUES (?, ?, 'AKTIF', ?)";
-          await conn.query(
-            sqlInsMenu,
-            [iduser, idmenu, ctx.iduser]
-          );
+          await insertUserMenu(conn, iduser, idmenu, ctx.iduser);
         } catch (e) {
           // Abaikan error duplicate entry (menu sudah ada dari template)
           if (e.code !== 'ER_DUP_ENTRY') throw e;
@@ -176,12 +188,8 @@ exports.update = async (req, res) => {
     if (menus !== undefined) {
       let sqlDelMenu = 'DELETE FROM usermenu WHERE iduser = ?';
       await conn.query(sqlDelMenu, [id]);
-      for (const idmenu of (menus || [])) {
-        let sqlInsMenuUpd = "INSERT INTO usermenu (iduser, idmenu, status, userentry) VALUES (?, ?, 'AKTIF', ?)";
-        await conn.query(
-          sqlInsMenuUpd,
-          [id, idmenu, ctx.iduser]
-        );
+      for (const menu of (menus || [])) {
+        await insertUserMenu(conn, id, menu, ctx.iduser);
       }
     }
 
@@ -248,12 +256,16 @@ exports.resetPassword = async (req, res) => {
 // GET /user/:id/menus — Menampilkan daftar menu yang di-assign ke user
 exports.getMenus = async (req, res) => {
   try {
-    let sqlMenus = `SELECT m.* FROM menu m
-       JOIN usermenu um ON m.idmenu = um.idmenu AND um.iduser = ?
-       WHERE um.status = 'AKTIF'`;
-    const rows = await tenantQuery(
+    const ctx = getTenantContext();
+    let sqlMenus = `SELECT m.*, um.hakakses, um.tambah, um.ubah, um.approve, um.batalapprove, um.bataltransaksi, um.cetak
+       FROM usermenu um
+       JOIN user u ON u.iduser = um.iduser
+       JOIN menu m ON m.idmenu = um.idmenu
+       WHERE um.iduser = ? AND u.idtenant = ? AND um.status = 'AKTIF'
+       ORDER BY m.urutan ASC`;
+    const [rows] = await pool.query(
       sqlMenus,
-      [req.params.id]
+      [req.params.id, ctx.idtenant]
     );
     res.json(rows);
   } catch (err) {
@@ -265,12 +277,13 @@ exports.getMenus = async (req, res) => {
 // GET /user/:id/lokasis — Menampilkan daftar lokasi yang di-assign ke user
 exports.getLokasis = async (req, res) => {
   try {
+    const ctx = getTenantContext();
     let sqlLokasis = `SELECT l.* FROM lokasi l
        JOIN userlokasi ul ON l.idlokasi = ul.idlokasi AND ul.iduser = ?
-       WHERE ul.status = 'AKTIF'`;
-    const rows = await tenantQuery(
+       WHERE ul.status = 'AKTIF' AND l.idtenant = ?`;
+    const [rows] = await pool.query(
       sqlLokasis,
-      [req.params.id]
+      [req.params.id, ctx.idtenant]
     );
     res.json(rows);
   } catch (err) {

@@ -7,6 +7,7 @@ const { pool, getConnection, tenantQuery, tenantExecute, getTenantContext } = re
 require('dotenv').config();
 const logger = require('../../lib/logger');
 const { setConfigValue, getConfigValue } = require('../../lib/confighelper');
+const { getMenuAccess } = require('../../lib/access');
 
 const DEFAULT_COA = [
   ['1-1001', 'Kas Tunai',               'ASET',        'DEBET'],
@@ -23,6 +24,15 @@ const DEFAULT_COA = [
   ['5-1003', 'Beban Gaji',              'BEBAN',       'DEBET'],
 ];
 
+function upperOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value).toUpperCase();
+}
+
+function upperOrEmpty(value) {
+  return String(value || '').toUpperCase();
+}
+
 async function seedDefaultCustomer(conn, idtenant, iduser = 0) {
   await conn.query(
     `INSERT IGNORE INTO customer (idtenant, kodecustomer, namacustomer, alamat, hp, status, userentry)
@@ -38,7 +48,7 @@ function signLoginToken(user, loc) {
       idtenant    : user.idtenant,
       idlokasi    : loc.idlokasi,
       kodelokasi  : loc.kodelokasi,
-      namalokasi  : loc.namalokasi,
+      namalokasi  : upperOrEmpty(loc.namalokasi),
       tokenversion: user.tokenversion,
     },
     process.env.JWT_SECRET,
@@ -57,7 +67,7 @@ async function buildLoginResponse(user, loc, token) {
       namauser  : user.namauser,
       email     : user.email,
       isowner   : user.isowner,
-      namatenant: user.namatenant,
+      namatenant: upperOrEmpty(user.namatenant),
       logo      : user.tenant_logo,
       ppn       : user.ppn,
       pakaiPPN  : String(pakaiPPN || 'YA').toUpperCase(),
@@ -65,10 +75,25 @@ async function buildLoginResponse(user, loc, token) {
     lokasi: {
       idlokasi  : loc.idlokasi,
       kodelokasi: loc.kodelokasi,
-      namalokasi: loc.namalokasi,
+      namalokasi: upperOrEmpty(loc.namalokasi),
     },
     needSelectLocation: false,
   };
+}
+
+async function userHasPosAccess(user) {
+  if (Number(user.isowner) === 1) return true;
+  const [[row]] = await pool.query(
+    `SELECT 1
+     FROM usermenu um
+     JOIN menu m ON m.idmenu = um.idmenu
+     WHERE um.iduser = ? AND m.kodemenu = 'pos' AND um.status = 'AKTIF'
+       AND (um.hakakses = 1 OR um.tambah = 1 OR um.ubah = 1 OR um.approve = 1
+        OR um.batalapprove = 1 OR um.bataltransaksi = 1 OR um.cetak = 1)
+     LIMIT 1`,
+    [user.iduser]
+  );
+  return Boolean(row);
 }
 
 // POST /auth/login — Login user; jika hanya 1 lokasi langsung dapat token, jika banyak pilih lokasi dulu
@@ -112,6 +137,10 @@ exports.login = async (req, res) => {
 
     // Validasi: user harus punya minimal 1 lokasi
     if (lokasi.length === 0) return res.status(401).json({ message: 'Tidak ada lokasi yang di-assign' });
+
+    if (String(req.headers['x-app'] || '').toUpperCase() === 'POS' && !(await userHasPosAccess(user))) {
+      return res.status(403).json({ message: 'User tidak memiliki hak akses POS' });
+    }
 
     const loc = lokasi.find(l => Number(l.isdefault) === 1) || lokasi[0];
     const token = signLoginToken(user, loc);
@@ -162,19 +191,48 @@ exports.register = async (req, res) => {
   const conn = await getConnection();
   try {
     const { tenant: t, lokasi: l, user: u } = req.body;
+    const tenantData = {
+      namatenant: upperOrEmpty(t?.namatenant),
+      alamat: upperOrNull(t?.alamat),
+      hp: t?.hp || null,
+      email: t?.email || null,
+      npwp: upperOrNull(t?.npwp),
+      ppn: t?.ppn || 0,
+      idcurrency: t?.idcurrency || 1,
+    };
+    const lokasiData = {
+      kodelokasi: upperOrEmpty(l?.kodelokasi),
+      namalokasi: upperOrEmpty(l?.namalokasi),
+      alamat: upperOrNull(l?.alamat),
+      hp: l?.hp || null,
+    };
 
     await conn.beginTransaction();
 
     // 1. Insert tenant
     let sql = `INSERT INTO tenant (namatenant, alamat, hp, email, npwp, ppn, idcurrency, status, userentry)
        VALUES (?, ?, ?, ?, ?, ?, IFNULL(?, 1), 'AKTIF', 0)`;
-    const [tenantResult] = await conn.query(sql, [t.namatenant, t.alamat || null, t.hp || null, t.email || null, t.npwp || null, t.ppn || 0, t.idcurrency || 1]);
+    const [tenantResult] = await conn.query(sql, [
+      tenantData.namatenant,
+      tenantData.alamat,
+      tenantData.hp,
+      tenantData.email,
+      tenantData.npwp,
+      tenantData.ppn,
+      tenantData.idcurrency,
+    ]);
     const idtenant = tenantResult.insertId;
 
     // 2. Insert lokasi default (isdefault=1)
     let sql2 = `INSERT INTO lokasi (idtenant, kodelokasi, namalokasi, alamat, hp, isdefault, status, userentry)
        VALUES (?, ?, ?, ?, ?, 1, 'AKTIF', 0)`;
-    const [lokasiResult] = await conn.query(sql2, [idtenant, l.kodelokasi, l.namalokasi, l.alamat || null, l.hp || null]);
+    const [lokasiResult] = await conn.query(sql2, [
+      idtenant,
+      lokasiData.kodelokasi,
+      lokasiData.namalokasi,
+      lokasiData.alamat,
+      lokasiData.hp,
+    ]);
     const idlokasi = lokasiResult.insertId;
 
     // 3. Insert user owner (isowner=1) — password di-hash dengan bcrypt 10 salt rounds
@@ -196,7 +254,8 @@ exports.register = async (req, res) => {
     let sql7 = 'SELECT idmenu FROM menu';
     const [allMenus] = await conn.query(sql7);
     for (const m of allMenus) {
-      let sql8 = `INSERT INTO usermenu (iduser, idmenu, status, userentry) VALUES (?, ?, 'AKTIF', ?)`;
+      let sql8 = `INSERT INTO usermenu (iduser, idmenu, hakakses, tambah, ubah, approve, batalapprove, bataltransaksi, cetak, status, userentry)
+                  VALUES (?, ?, 1, 1, 1, 1, 1, 1, 1, 'AKTIF', ?)`;
       await conn.query(sql8, [iduser, m.idmenu, iduser]);
     }
 
@@ -226,8 +285,8 @@ exports.register = async (req, res) => {
         iduser,
         idtenant,
         idlokasi,
-        kodelokasi: l.kodelokasi,
-        namalokasi: l.namalokasi,
+        kodelokasi: lokasiData.kodelokasi,
+        namalokasi: lokasiData.namalokasi,
         tokenversion: 1,
       },
       process.env.JWT_SECRET,
@@ -245,12 +304,12 @@ exports.register = async (req, res) => {
         namauser  : u.namauser,
         email     : u.email,
         isowner   : 1,
-        namatenant: t.namatenant,
+        namatenant: tenantData.namatenant,
       },
       lokasi: {
         idlokasi,
-        kodelokasi: l.kodelokasi,
-        namalokasi: l.namalokasi,
+        kodelokasi: lokasiData.kodelokasi,
+        namalokasi: lokasiData.namalokasi,
       },
     });
   } catch (err) {
@@ -279,7 +338,24 @@ exports.me = async (req, res) => {
        WHERE u.iduser = ? AND u.idtenant = ?`;
     const [rows] = await pool.query(sql, [ctx.idlokasi, ctx.iduser, ctx.idtenant]);
     if (rows.length === 0) return res.status(404).json({ message: 'User tidak ditemukan' });
-    res.json(rows[0]);
+    res.json({
+      ...rows[0],
+      namatenant: upperOrEmpty(rows[0].namatenant),
+      namalokasi: upperOrEmpty(rows[0].namalokasi),
+      tenant_alamat: upperOrNull(rows[0].tenant_alamat),
+      lokasi_alamat: upperOrNull(rows[0].lokasi_alamat),
+    });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// GET /auth/access?kodemenu=... - satu endpoint cek akses halaman dan tombol
+exports.access = async (req, res) => {
+  try {
+    const access = await getMenuAccess(req.query.kodemenu);
+    res.json(access);
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });
@@ -343,7 +419,7 @@ exports.refresh = async (req, res) => {
         namauser  : user.namauser,
         email     : user.email,
         isowner   : user.isowner,
-        namatenant: user.namatenant,
+        namatenant: upperOrEmpty(user.namatenant),
         ppn       : user.ppn,
         pakaiPPN  : String(pakaiPPN || 'YA').toUpperCase(),
       },
