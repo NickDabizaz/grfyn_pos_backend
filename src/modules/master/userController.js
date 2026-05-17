@@ -113,9 +113,9 @@ exports.create = async (req, res) => {
 
     // Assign menu kustom (jika tidak pakai template atau tambahan)
     if (menus && menus.length > 0) {
-      for (const idmenu of menus) {
+      for (const menu of menus) {
         try {
-          await insertUserMenu(conn, iduser, idmenu, ctx.iduser);
+          await insertUserMenu(conn, iduser, menu, ctx.iduser);
         } catch (e) {
           // Abaikan error duplicate entry (menu sudah ada dari template)
           if (e.code !== 'ER_DUP_ENTRY') throw e;
