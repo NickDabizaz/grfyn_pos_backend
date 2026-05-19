@@ -1,5 +1,92 @@
 require('dotenv').config();
 const mysql = require('mysql2/promise');
+const { setConfigValue } = require('./lib/confighelper');
+
+const DEFAULT_COA = [
+  ['1-1001', 'Kas Tunai', 'ASET', 'DEBET'],
+  ['1-1002', 'Bank Operasional', 'ASET', 'DEBET'],
+  ['1-1003', 'Piutang Usaha', 'ASET', 'DEBET'],
+  ['1-1004', 'Persediaan Barang Dagang', 'ASET', 'DEBET'],
+  ['1-1005', 'PPN Masukan', 'ASET', 'DEBET'],
+  ['1-1006', 'Uang Muka Pembelian', 'ASET', 'DEBET'],
+  ['1-1007', 'Piutang Karyawan', 'ASET', 'DEBET'],
+  ['1-1008', 'Piutang Lain-lain', 'ASET', 'DEBET'],
+  ['1-1009', 'Penyisihan Piutang Tak Tertagih', 'ASET', 'KREDIT'],
+  ['1-1010', 'Kas Kecil', 'ASET', 'DEBET'],
+  ['1-1011', 'Bank BCA', 'ASET', 'DEBET'],
+  ['1-1012', 'Bank Mandiri', 'ASET', 'DEBET'],
+  ['1-1013', 'Bank BRI', 'ASET', 'DEBET'],
+  ['1-1014', 'QRIS / E-Wallet Clearing', 'ASET', 'DEBET'],
+  ['1-1015', 'Giro / Cek Diterima', 'ASET', 'DEBET'],
+  ['1-1020', 'Sewa Dibayar Dimuka', 'ASET', 'DEBET'],
+  ['1-1021', 'Asuransi Dibayar Dimuka', 'ASET', 'DEBET'],
+  ['1-1030', 'Peralatan Toko', 'ASET', 'DEBET'],
+  ['1-1031', 'Akumulasi Penyusutan Peralatan', 'ASET', 'KREDIT'],
+  ['1-1032', 'Kendaraan', 'ASET', 'DEBET'],
+  ['1-1033', 'Akumulasi Penyusutan Kendaraan', 'ASET', 'KREDIT'],
+  ['1-1040', 'Deposit / Uang Jaminan', 'ASET', 'DEBET'],
+
+  ['2-1001', 'Hutang Usaha', 'LIABILITAS', 'KREDIT'],
+  ['2-1002', 'Hutang Gaji', 'LIABILITAS', 'KREDIT'],
+  ['2-1003', 'PPN Keluaran', 'LIABILITAS', 'KREDIT'],
+  ['2-1004', 'PPN Kurang Bayar', 'LIABILITAS', 'KREDIT'],
+  ['2-1005', 'Hutang PPh', 'LIABILITAS', 'KREDIT'],
+  ['2-1006', 'Hutang Biaya', 'LIABILITAS', 'KREDIT'],
+  ['2-1007', 'Uang Muka Penjualan', 'LIABILITAS', 'KREDIT'],
+  ['2-1008', 'Hutang Bank Jangka Pendek', 'LIABILITAS', 'KREDIT'],
+  ['2-2001', 'Hutang Bank Jangka Panjang', 'LIABILITAS', 'KREDIT'],
+
+  ['3-1001', 'Modal Pemilik', 'EKUITAS', 'KREDIT'],
+  ['3-1002', 'Laba Ditahan', 'EKUITAS', 'KREDIT'],
+  ['3-1003', 'Prive / Dividen', 'EKUITAS', 'DEBET'],
+  ['3-1004', 'Laba Tahun Berjalan', 'EKUITAS', 'KREDIT'],
+
+  ['4-1001', 'Penjualan Barang Dagang', 'PENDAPATAN', 'KREDIT'],
+  ['4-1002', 'Penjualan Jasa', 'PENDAPATAN', 'KREDIT'],
+  ['4-1003', 'Diskon Penjualan', 'PENDAPATAN', 'DEBET'],
+  ['4-1004', 'Retur Penjualan', 'PENDAPATAN', 'DEBET'],
+  ['4-1005', 'Pendapatan Ongkir', 'PENDAPATAN', 'KREDIT'],
+  ['4-1006', 'Pendapatan Lain-lain', 'PENDAPATAN', 'KREDIT'],
+  ['4-1007', 'Selisih Pembulatan Penjualan', 'PENDAPATAN', 'KREDIT'],
+
+  ['5-1001', 'Harga Pokok Penjualan', 'BEBAN', 'DEBET'],
+  ['5-1002', 'Beban Operasional', 'BEBAN', 'DEBET'],
+  ['5-1003', 'Beban Gaji', 'BEBAN', 'DEBET'],
+  ['5-1004', 'Pembelian Barang Dagang', 'BEBAN', 'DEBET'],
+  ['5-1005', 'Retur Pembelian', 'BEBAN', 'KREDIT'],
+  ['5-1006', 'Diskon Pembelian', 'BEBAN', 'KREDIT'],
+  ['5-1007', 'Ongkos Angkut Pembelian', 'BEBAN', 'DEBET'],
+  ['5-1008', 'Selisih Stok', 'BEBAN', 'DEBET'],
+  ['5-1009', 'Penyesuaian Persediaan', 'BEBAN', 'DEBET'],
+
+  ['6-1001', 'Beban Sewa', 'BEBAN', 'DEBET'],
+  ['6-1002', 'Beban Listrik dan Air', 'BEBAN', 'DEBET'],
+  ['6-1003', 'Beban Internet', 'BEBAN', 'DEBET'],
+  ['6-1004', 'Beban Telepon', 'BEBAN', 'DEBET'],
+  ['6-1005', 'Beban ATK', 'BEBAN', 'DEBET'],
+  ['6-1006', 'Beban Penyusutan', 'BEBAN', 'DEBET'],
+  ['6-1007', 'Beban Perlengkapan', 'BEBAN', 'DEBET'],
+  ['6-1008', 'Beban Promosi', 'BEBAN', 'DEBET'],
+  ['6-1009', 'Beban Transportasi', 'BEBAN', 'DEBET'],
+  ['6-1010', 'Beban Administrasi Bank', 'BEBAN', 'DEBET'],
+  ['6-1011', 'Beban Pembulatan', 'BEBAN', 'DEBET'],
+  ['6-1012', 'Beban Pajak', 'BEBAN', 'DEBET'],
+  ['6-1013', 'Beban Perbaikan dan Pemeliharaan', 'BEBAN', 'DEBET'],
+  ['6-1014', 'Beban Kebersihan', 'BEBAN', 'DEBET'],
+  ['6-1015', 'Beban Keamanan', 'BEBAN', 'DEBET'],
+  ['6-1016', 'Beban Lain-lain', 'BEBAN', 'DEBET'],
+];
+
+const DEFAULT_JURNAL_AKUN = {
+  AKUN_PIUTANG     : '1-1003',
+  AKUN_PENJUALAN   : '4-1001',
+  AKUN_PPN_KELUARAN: '2-1003',
+  AKUN_HUTANG      : '2-1001',
+  AKUN_PEMBELIAN   : '5-1004',
+  AKUN_PPN_MASUKAN : '1-1005',
+  AKUN_KAS         : '1-1001',
+  AKUN_BANK        : '1-1002',
+};
 
 async function migrate() {
   const connection = await mysql.createConnection({
@@ -1543,29 +1630,44 @@ async function migrate() {
 
 // seedDefaultCOA — dipanggil dari authController.register saat membuat tenant baru
 // Menyediakan Chart of Account dasar agar jurnaling langsung berfungsi
-async function seedDefaultCOA(conn, idtenant) {
-  const defaultCOA = [
-    ['1-1001', 'Kas Tunai',               'ASET',        'DEBET'],
-    ['1-1002', 'Bank',                    'ASET',        'DEBET'],
-    ['1-1003', 'Piutang Usaha',           'ASET',        'DEBET'],
-    ['1-1004', 'Persediaan Barang',       'ASET',        'DEBET'],
-    ['1-1005', 'PPN Masukan',             'ASET',        'DEBET'],
-    ['2-1001', 'Hutang Usaha',            'LIABILITAS',  'KREDIT'],
-    ['2-1002', 'Hutang Gaji',             'LIABILITAS',  'KREDIT'],
-    ['2-1003', 'PPN Keluaran',            'LIABILITAS',  'KREDIT'],
-    ['3-1001', 'Modal',                   'EKUITAS',     'KREDIT'],
-    ['3-1002', 'Laba Ditahan',            'EKUITAS',     'KREDIT'],
-    ['4-1001', 'Pendapatan Penjualan',    'PENDAPATAN',  'KREDIT'],
-    ['5-1001', 'Harga Pokok Penjualan',   'BEBAN',       'DEBET'],
-    ['5-1002', 'Beban Operasional',       'BEBAN',       'DEBET'],
-    ['5-1003', 'Beban Gaji',              'BEBAN',       'DEBET'],
-    ['5-1004', 'Pembelian',               'BEBAN',       'DEBET'],
-  ];
-  for (const [kode, nama, jenis, saldo] of defaultCOA) {
+async function seedDefaultCOA(conn, idtenant, iduser = 0) {
+  for (const [kode, nama, jenis, saldo] of DEFAULT_COA) {
     await conn.query(
       'INSERT IGNORE INTO akun (idtenant, kodeakun, namaakun, jenisak, saldo, status, userentry) VALUES (?,?,?,?,?,?,?)',
-      [idtenant, kode, nama, jenis, saldo, 'AKTIF', 0]
+      [idtenant, kode, nama, jenis, saldo, 'AKTIF', iduser || 0]
     );
+  }
+}
+
+async function seedDefaultJurnalSettings(conn, idtenant, options = {}) {
+  const overwrite = options.overwrite === true;
+
+  for (const [configName, kodeakun] of Object.entries(DEFAULT_JURNAL_AKUN)) {
+    const [[akun]] = await conn.query(
+      'SELECT idakun FROM akun WHERE idtenant = ? AND kodeakun = ? AND status = ? LIMIT 1',
+      [idtenant, kodeakun, 'AKTIF']
+    );
+    if (!akun) continue;
+
+    let shouldWrite = overwrite;
+    if (!shouldWrite) {
+      const [[existing]] = await conn.query(
+        `SELECT c.value, a.idakun AS valid_idakun
+         FROM config c
+         LEFT JOIN akun a
+           ON a.idtenant = c.idtenant
+          AND a.idakun = CAST(c.value AS UNSIGNED)
+          AND a.status = 'AKTIF'
+         WHERE c.idtenant = ? AND c.modul = 'JURNAL' AND c.config = ?
+         LIMIT 1`,
+        [idtenant, configName]
+      );
+      shouldWrite = !existing || !existing.value || !existing.valid_idakun;
+    }
+
+    if (shouldWrite) {
+      await setConfigValue(conn, idtenant, 'JURNAL', configName, String(akun.idakun), 1);
+    }
   }
 }
 
@@ -1577,9 +1679,17 @@ async function seedDefaultCustomer(conn, idtenant, iduser = 0) {
   );
 }
 
-module.exports = { seedDefaultCOA, seedDefaultCustomer };
+module.exports = {
+  DEFAULT_COA,
+  DEFAULT_JURNAL_AKUN,
+  seedDefaultCOA,
+  seedDefaultJurnalSettings,
+  seedDefaultCustomer,
+};
 
-migrate().catch(err => {
-  console.error('Migration failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  migrate().catch(err => {
+    console.error('Migration failed:', err);
+    process.exit(1);
+  });
+}

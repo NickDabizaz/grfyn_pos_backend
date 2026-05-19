@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "migrate": "node src/migrate.js",
-    "migrate:jurnal": "node src/migrate-jurnal.js"
+    "migrate": "node src/migrate.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -8,36 +8,7 @@ require('dotenv').config();
 const logger = require('../../lib/logger');
 const { setConfigValue, getConfigValue } = require('../../lib/confighelper');
 const { getMenuAccess } = require('../../lib/access');
-
-const DEFAULT_COA = [
-  ['1-1001', 'Kas Tunai',               'ASET',        'DEBET'],
-  ['1-1002', 'Bank',                    'ASET',        'DEBET'],
-  ['1-1003', 'Piutang Usaha',           'ASET',        'DEBET'],
-  ['1-1004', 'Persediaan Barang',       'ASET',        'DEBET'],
-  ['1-1005', 'PPN Masukan',             'ASET',        'DEBET'],
-  ['2-1001', 'Hutang Usaha',            'LIABILITAS',  'KREDIT'],
-  ['2-1002', 'Hutang Gaji',             'LIABILITAS',  'KREDIT'],
-  ['2-1003', 'PPN Keluaran',            'LIABILITAS',  'KREDIT'],
-  ['3-1001', 'Modal',                   'EKUITAS',     'KREDIT'],
-  ['3-1002', 'Laba Ditahan',            'EKUITAS',     'KREDIT'],
-  ['4-1001', 'Pendapatan Penjualan',    'PENDAPATAN',  'KREDIT'],
-  ['5-1001', 'Harga Pokok Penjualan',   'BEBAN',       'DEBET'],
-  ['5-1002', 'Beban Operasional',       'BEBAN',       'DEBET'],
-  ['5-1003', 'Beban Gaji',              'BEBAN',       'DEBET'],
-  ['5-1004', 'Pembelian',               'BEBAN',       'DEBET'],
-];
-
-// Pemetaan akun default jurnal (config modul JURNAL) -> kode akun pada DEFAULT_COA
-const DEFAULT_JURNAL_AKUN = {
-  AKUN_PIUTANG     : '1-1003',
-  AKUN_PENJUALAN   : '4-1001',
-  AKUN_PPN_KELUARAN: '2-1003',
-  AKUN_HUTANG      : '2-1001',
-  AKUN_PEMBELIAN   : '5-1004',
-  AKUN_PPN_MASUKAN : '1-1005',
-  AKUN_KAS         : '1-1001',
-  AKUN_BANK        : '1-1002',
-};
+const { seedDefaultCOA, seedDefaultCustomer, seedDefaultJurnalSettings } = require('../../migrate');
 
 function upperOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -46,14 +17,6 @@ function upperOrNull(value) {
 
 function upperOrEmpty(value) {
   return String(value || '').toUpperCase();
-}
-
-async function seedDefaultCustomer(conn, idtenant, iduser = 0) {
-  await conn.query(
-    `INSERT IGNORE INTO customer (idtenant, kodecustomer, namacustomer, alamat, hp, status, userentry)
-     VALUES (?, 'CASH', 'CASH', '', '', 'AKTIF', ?)`,
-    [idtenant, iduser]
-  );
 }
 
 function signLoginToken(user, loc) {
@@ -297,12 +260,7 @@ exports.register = async (req, res) => {
     await conn.query(sql9, [iduser, idlokasi, iduser]);
 
     // 7. Seed default Chart of Accounts agar jurnaling berfungsi sejak awal
-    for (const [kode, nama, jenis, saldo] of DEFAULT_COA) {
-      await conn.query(
-        'INSERT IGNORE INTO akun (idtenant, kodeakun, namaakun, jenisak, saldo, status, userentry) VALUES (?,?,?,?,?,?,?)',
-        [idtenant, kode, nama, jenis, saldo, 'AKTIF', 0]
-      );
-    }
+    await seedDefaultCOA(conn, idtenant, iduser);
     await seedDefaultCustomer(conn, idtenant, iduser);
 
     await setConfigValue(conn, idtenant, 'GLOBAL', 'CEKMINUS', 'TIDAK', 1);
@@ -311,15 +269,7 @@ exports.register = async (req, res) => {
     await setConfigValue(conn, idtenant, 'POS', 'HARGA_INCLUDE_PPN', 'YA', 1);
 
     // 7b. Seed setting akun default jurnal (modul JURNAL) berdasarkan COA default
-    for (const [configName, kodeakun] of Object.entries(DEFAULT_JURNAL_AKUN)) {
-      const [[akun]] = await conn.query(
-        'SELECT idakun FROM akun WHERE idtenant = ? AND kodeakun = ? LIMIT 1',
-        [idtenant, kodeakun]
-      );
-      if (akun) {
-        await setConfigValue(conn, idtenant, 'JURNAL', configName, String(akun.idakun), 1);
-      }
-    }
+    await seedDefaultJurnalSettings(conn, idtenant, { overwrite: true });
 
     await conn.commit();
 

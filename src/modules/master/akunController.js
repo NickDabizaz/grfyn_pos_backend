@@ -5,6 +5,7 @@ const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require(
 const { generateKodeMaster } = require('../../lib/kodetrans');
 const { setConfigValue } = require('../../lib/confighelper');
 const logger = require('../../lib/logger');
+const { seedDefaultCOA, seedDefaultJurnalSettings } = require('../../migrate');
 
 // Pemetaan field request (snake_case) -> nama config jurnal pada tabel `config`
 const JURNAL_SETTING_FIELDS = {
@@ -132,6 +133,13 @@ exports.remove = async (req, res) => {
 exports.getSettingJurnal = async (req, res) => {
   try {
     const ctx = getTenantContext();
+    const conn = await getConnection();
+    try {
+      await seedDefaultCOA(conn, ctx.idtenant, ctx.iduser);
+      await seedDefaultJurnalSettings(conn, ctx.idtenant);
+    } finally {
+      conn.release();
+    }
     const rows = await tenantQuery(
       `SELECT c.config, c.value AS idakun, a.kodeakun, a.namaakun, a.status AS akunstatus
        FROM config c
