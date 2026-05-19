@@ -2,6 +2,7 @@
 // Endpoint: GET /getAll, GET /getOne/:id, POST /create, PUT /update/:id, DELETE /remove/:id
 const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeKas } = require('../../lib/kodetrans');
+const jurnalhelper = require('../../lib/jurnalhelper');
 const logger = require('../../lib/logger');
 
 // GET — Mendapatkan daftar transaksi kas dengan filter pencarian kode
@@ -62,6 +63,8 @@ exports.create = async (req, res) => {
     // ID kas dari auto-increment
     const idkas = result.insertId;
 
+    // Posisi jurnal ditentukan dari tanda amount: >= 0 -> DEBET, < 0 -> KREDIT
+    const jurnalLines = [];
     for (const d of details) {
       // Insert detail per akun
       let sql2 = 'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)';
@@ -69,17 +72,15 @@ exports.create = async (req, res) => {
         [idkas, ctx.idtenant, d.idakun, d.catatan || '', d.amount]
       );
 
-      // Tentukan posisi jurnal: akun KAS selalu DEBET, akun lain lihat tanda amount (>= 0 → DEBET, < 0 → KREDIT)
-      let sql3 = 'SELECT namaakun FROM akun WHERE idakun = ? AND idtenant = ?';
-      const [[akun]] = await conn.query(sql3, [d.idakun, ctx.idtenant]);
-      const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
-
-      // Insert entri jurnal dengan amount absolut
-      let sql4 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql4,
-        [ctx.idtenant, ctx.idlokasi, idkas, kodekas, 'kas', tgltrans, d.idakun, posisi, Math.abs(d.amount)]
-      );
+      const amt = parseFloat(d.amount) || 0;
+      jurnalLines.push({ idakun: d.idakun, posisi: amt >= 0 ? 'DEBET' : 'KREDIT', amount: Math.abs(amt) });
     }
+
+    // Jurnal kas — divalidasi balance (total DEBET harus sama dengan total KREDIT)
+    await jurnalhelper.postJurnal(conn, {
+      idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, idtrans: idkas, kodetrans: kodekas,
+      jenis: 'kas', tgltrans, lines: jurnalLines,
+    });
 
     await conn.commit();
     await logger.history('KAS_CREATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: kodekas, req });
@@ -87,7 +88,7 @@ exports.create = async (req, res) => {
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   } finally {
     conn.release();
   }
@@ -107,26 +108,26 @@ exports.update = async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ message: 'Kas tidak ditemukan' });
 
     // Hapus jurnal dan detail lama sebelum insert ulang
-    let sql2 = "DELETE FROM jurnal WHERE jenis = ? AND idtrans = ? AND idtenant = ? AND idlokasi = ?";
-    await conn.query(sql2, ['kas', id, ctx.idtenant, ctx.idlokasi]);
+    await jurnalhelper.hapusJurnal(conn, ctx.idtenant, [rows[0].kodekas]);
     let sql3 = 'DELETE FROM kasdtl WHERE idkas = ? AND idtenant = ?';
     await conn.query(sql3, [id, ctx.idtenant]);
 
+    const jurnalLines = [];
     for (const d of details) {
       let sql4 = 'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)';
       await conn.query(sql4,
         [id, ctx.idtenant, d.idakun, d.catatan || '', d.amount]
       );
 
-      let sql5 = 'SELECT namaakun FROM akun WHERE idakun = ? AND idtenant = ?';
-      const [[akun]] = await conn.query(sql5, [d.idakun, ctx.idtenant]);
-      const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
-
-      let sql6 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql6,
-        [ctx.idtenant, ctx.idlokasi, id, rows[0].kodekas, 'kas', rows[0].tgltrans, d.idakun, posisi, Math.abs(d.amount)]
-      );
+      const amt = parseFloat(d.amount) || 0;
+      jurnalLines.push({ idakun: d.idakun, posisi: amt >= 0 ? 'DEBET' : 'KREDIT', amount: Math.abs(amt) });
     }
+
+    // Jurnal kas — divalidasi balance (total DEBET harus sama dengan total KREDIT)
+    await jurnalhelper.postJurnal(conn, {
+      idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, idtrans: id, kodetrans: rows[0].kodekas,
+      jenis: 'kas', tgltrans: rows[0].tgltrans, lines: jurnalLines,
+    });
 
     await conn.commit();
     await logger.history('KAS_UPDATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: rows[0].kodekas, req });
@@ -134,7 +135,7 @@ exports.update = async (req, res) => {
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   } finally {
     conn.release();
   }
@@ -145,8 +146,8 @@ exports.remove = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
-    let sql = "DELETE FROM jurnal WHERE jenis = ? AND idtrans = ? AND idtenant = ? AND idlokasi = ?";
-    await conn.query(sql, ['kas', req.params.id, ctx.idtenant, ctx.idlokasi]);
+    const [[kas]] = await conn.query('SELECT kodekas FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?', [req.params.id, ctx.idtenant, ctx.idlokasi]);
+    if (kas) await jurnalhelper.hapusJurnal(conn, ctx.idtenant, [kas.kodekas]);
     let sql2 = 'DELETE FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?';
     await conn.query(sql2, [req.params.id, ctx.idtenant, ctx.idlokasi]);
     await logger.history('KAS_DELETE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: String(req.params.id), req });

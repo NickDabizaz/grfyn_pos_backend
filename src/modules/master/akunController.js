@@ -3,7 +3,20 @@
 
 const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeMaster } = require('../../lib/kodetrans');
+const { setConfigValue } = require('../../lib/confighelper');
 const logger = require('../../lib/logger');
+
+// Pemetaan field request (snake_case) -> nama config jurnal pada tabel `config`
+const JURNAL_SETTING_FIELDS = {
+  akun_piutang     : 'AKUN_PIUTANG',
+  akun_penjualan   : 'AKUN_PENJUALAN',
+  akun_ppn_keluaran: 'AKUN_PPN_KELUARAN',
+  akun_hutang      : 'AKUN_HUTANG',
+  akun_pembelian   : 'AKUN_PEMBELIAN',
+  akun_ppn_masukan : 'AKUN_PPN_MASUKAN',
+  akun_kas         : 'AKUN_KAS',
+  akun_bank        : 'AKUN_BANK',
+};
 
 // GET /akun — Menampilkan semua akun dengan filter pencarian opsional
 exports.getAll = async (req, res) => {
@@ -109,6 +122,84 @@ exports.remove = async (req, res) => {
     let sql2 = 'DELETE FROM akun WHERE idakun = ? AND idtenant = ?';
     await tenantExecute(sql2, [req.params.id, ctx.idtenant]);
     res.json({ message: 'Akun berhasil dihapus' });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// GET /akun/setting-jurnal — Menampilkan setting akun default jurnal (pop-up di Master Akun)
+exports.getSettingJurnal = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const rows = await tenantQuery(
+      `SELECT c.config, c.value AS idakun, a.kodeakun, a.namaakun, a.status AS akunstatus
+       FROM config c
+       LEFT JOIN akun a ON a.idakun = c.value AND a.idtenant = c.idtenant
+       WHERE c.idtenant = ? AND c.modul = 'JURNAL'`,
+      [ctx.idtenant]
+    );
+    const byConfig = {};
+    for (const r of rows) byConfig[r.config] = r;
+
+    const result = {};
+    for (const [field, configName] of Object.entries(JURNAL_SETTING_FIELDS)) {
+      const r = byConfig[configName];
+      result[field] = r && r.idakun
+        ? { idakun: Number(r.idakun), kodeakun: r.kodeakun, namaakun: r.namaakun, status: r.akunstatus }
+        : null;
+    }
+    res.json(result);
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// PUT /akun/setting-jurnal — Menyimpan setting akun default jurnal
+exports.saveSettingJurnal = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const fields = Object.keys(JURNAL_SETTING_FIELDS);
+
+    // Validasi: semua field wajib diisi dengan idakun yang valid
+    const ids = {};
+    for (const field of fields) {
+      const id = parseInt(req.body[field], 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: `Akun untuk "${field}" wajib dipilih` });
+      }
+      ids[field] = id;
+    }
+
+    // Validasi: semua akun ada, milik tenant ini, dan berstatus AKTIF
+    const uniqueIds = [...new Set(Object.values(ids))];
+    const akunRows = await tenantQuery(
+      'SELECT idakun, status FROM akun WHERE idtenant = ? AND idakun IN (?)',
+      [ctx.idtenant, uniqueIds]
+    );
+    const akunStatus = new Map(akunRows.map(a => [a.idakun, a.status]));
+    for (const field of fields) {
+      const status = akunStatus.get(ids[field]);
+      if (!status) return res.status(400).json({ message: `Akun untuk "${field}" tidak ditemukan` });
+      if (status !== 'AKTIF') return res.status(400).json({ message: `Akun untuk "${field}" tidak aktif` });
+    }
+
+    const conn = await getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const field of fields) {
+        await setConfigValue(conn, ctx.idtenant, 'JURNAL', JURNAL_SETTING_FIELDS[field], String(ids[field]), 1);
+      }
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+
+    res.json({ message: 'Setting akun default jurnal berhasil disimpan' });
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });

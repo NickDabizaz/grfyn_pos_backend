@@ -1,5 +1,6 @@
 const { tenantQuery, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeReturBeli } = require('../../lib/kodetrans');
+const jurnalhelper = require('../../lib/jurnalhelper');
 const logger = require('../../lib/logger');
 
 async function calculateAndInsertDetails(conn, { idreturbeli, idtenant, items }) {
@@ -25,7 +26,7 @@ async function calculateAndInsertDetails(conn, { idreturbeli, idtenant, items })
   return total;
 }
 
-async function postApprovedRetur(conn, { idtenant, idlokasi, idsupplier, kodereturbeli, kodebeli, idreturbeli, tgltrans, total }) {
+async function postApprovedRetur(conn, { idtenant, idlokasi, idsupplier, kodereturbeli, kodebeli, idreturbeli, tgltrans, total, akun }) {
   const [details] = await conn.query(
     'SELECT * FROM returbelidtl WHERE idreturbeli = ? AND idtenant = ?',
     [idreturbeli, idtenant]
@@ -44,9 +45,17 @@ async function postApprovedRetur(conn, { idtenant, idlokasi, idsupplier, koderet
       [idtenant, idlokasi, idsupplier, kodebeli, 'RETUR', kodereturbeli, -total, 0, -total, tgltrans, 'OPEN']
     );
   }
+
+  // Jurnal retur pembelian: DEBET Hutang; KREDIT Pembelian + PPN Masukan
+  const totalPpn = details.reduce((s, it) => s + parseFloat(it.ppn || 0), 0);
+  await jurnalhelper.postJurnalReturBeli(conn, {
+    akun, idtenant, idlokasi, idreturbeli, kodereturbeli, tgltrans,
+    total: parseFloat(total || 0), totalppn: totalPpn,
+  });
 }
 
 async function deletePostedRetur(conn, { idtenant, idlokasi, kodereturbeli }) {
+  await jurnalhelper.hapusJurnal(conn, idtenant, [kodereturbeli]);
   await conn.query(
     "DELETE FROM kartuhutang WHERE kodetransreferensi = ? AND idtenant = ? AND idlokasi = ? AND jenis = 'RETUR'",
     [kodereturbeli, idtenant, idlokasi]
@@ -73,6 +82,7 @@ exports.create = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
     const { idsupplier, idlokasi, idbeli, kodebeli, items, catatan, tgltrans } = req.body;
     const approve = req.body.approve === true || req.body.status === 'APPROVED';
@@ -118,6 +128,7 @@ exports.create = async (req, res) => {
         idreturbeli: header.idreturbeli,
         tgltrans: tgl,
         total,
+        akun,
       });
     }
 
@@ -137,6 +148,7 @@ exports.update = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
     const { id } = req.params;
     const { idsupplier, idlokasi, idbeli, kodebeli, items, catatan, tgltrans } = req.body;
@@ -190,6 +202,7 @@ exports.update = async (req, res) => {
         idreturbeli: id,
         tgltrans: tgl,
         total,
+        akun,
       });
     }
 
@@ -313,6 +326,7 @@ exports.approve = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
     const { id } = req.params;
 
@@ -335,6 +349,7 @@ exports.approve = async (req, res) => {
       idreturbeli: id,
       tgltrans: retur.tgltrans,
       total: retur.total,
+      akun,
     });
     await conn.query("UPDATE returbeli SET status = 'APPROVED' WHERE idreturbeli = ? AND idtenant = ?", [id, ctx.idtenant]);
     await refreshBeliReturStatus(conn, { idtenant: ctx.idtenant, idbeli: retur.idbeli });

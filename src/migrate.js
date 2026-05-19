@@ -36,8 +36,8 @@ async function migrate() {
     'penyesuaianstokdtl', 'penyesuaianstok',
     'kartustok',
     'tukarbarangdtl_baru', 'tukarbarangdtl_kembali', 'tukarbarang',
-    'pelunasanpiutangdtl', 'pelunasanpiutang', 'kartupiutang',
-    'pelunasanhutangdtl', 'pelunasanhutang', 'kartuhutang',
+    'pelunasanpiutangbayar', 'pelunasanpiutangdtl', 'pelunasanpiutang', 'kartupiutang',
+    'pelunasanhutangbayar', 'pelunasanhutangdtl', 'pelunasanhutang', 'kartuhutang',
     'returjualdtl', 'returjual',
     'returbelidtl', 'returbeli',
     'belidtl', 'beli', 'jualdtl', 'jual',
@@ -777,6 +777,21 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
+  // pelunasanpiutangbayar — rincian akun pembayaran (Detail Jurnal) untuk jurnal pelunasan piutang
+  await connection.query(`
+    CREATE TABLE pelunasanpiutangbayar (
+      idbayar     INT AUTO_INCREMENT PRIMARY KEY,
+      idpelunasan INT NOT NULL,
+      idtenant    INT NOT NULL,
+      idakun      INT NOT NULL,
+      amount      DECIMAL(15,2) NOT NULL,
+      INDEX idx_ppb_pelunasan (idpelunasan),
+      FOREIGN KEY (idpelunasan) REFERENCES pelunasanpiutang(idpelunasan) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idakun) REFERENCES akun(idakun)
+    ) ENGINE=InnoDB
+  `);
+
   // kartuhutang
   await connection.query(`
     CREATE TABLE kartuhutang (
@@ -829,6 +844,21 @@ async function migrate() {
       kodetrans      VARCHAR(30) NOT NULL,
       amount         DECIMAL(15,2) NOT NULL,
       FOREIGN KEY (idpelunasan) REFERENCES pelunasanhutang(idpelunasan) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // pelunasanhutangbayar — rincian akun pembayaran (Detail Jurnal) untuk jurnal pelunasan hutang
+  await connection.query(`
+    CREATE TABLE pelunasanhutangbayar (
+      idbayar     INT AUTO_INCREMENT PRIMARY KEY,
+      idpelunasan INT NOT NULL,
+      idtenant    INT NOT NULL,
+      idakun      INT NOT NULL,
+      amount      DECIMAL(15,2) NOT NULL,
+      INDEX idx_phb_pelunasan (idpelunasan),
+      FOREIGN KEY (idpelunasan) REFERENCES pelunasanhutang(idpelunasan) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idakun) REFERENCES akun(idakun)
     ) ENGINE=InnoDB
   `);
 
@@ -1490,6 +1520,20 @@ async function migrate() {
     );
   }
 
+  // Seed menu — Laporan Akuntansi: grup + leaves (parent: laporan idmenu=8)
+  const laporanAkuntansi = [
+    [65, 8,  'laporan.akuntansi',           'Akuntansi',        4, null, null],
+    [66, 65, 'laporan.akuntansi.jurnal',    'Jurnal Transaksi', 1, null, null],
+    [67, 65, 'laporan.akuntansi.bukubesar', 'Buku Besar',       2, null, null],
+    [68, 65, 'laporan.akuntansi.neraca',    'Neraca',           3, null, null],
+  ];
+  for (const m of laporanAkuntansi) {
+    await connection.query(
+      'INSERT INTO menu (idmenu, idparent, kodemenu, namamenu, urutan, icon, path) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      m
+    );
+  }
+
   console.log('Seed data inserted');
   console.log('Migration completed successfully!');
 
@@ -1505,14 +1549,17 @@ async function seedDefaultCOA(conn, idtenant) {
     ['1-1002', 'Bank',                    'ASET',        'DEBET'],
     ['1-1003', 'Piutang Usaha',           'ASET',        'DEBET'],
     ['1-1004', 'Persediaan Barang',       'ASET',        'DEBET'],
+    ['1-1005', 'PPN Masukan',             'ASET',        'DEBET'],
     ['2-1001', 'Hutang Usaha',            'LIABILITAS',  'KREDIT'],
     ['2-1002', 'Hutang Gaji',             'LIABILITAS',  'KREDIT'],
+    ['2-1003', 'PPN Keluaran',            'LIABILITAS',  'KREDIT'],
     ['3-1001', 'Modal',                   'EKUITAS',     'KREDIT'],
     ['3-1002', 'Laba Ditahan',            'EKUITAS',     'KREDIT'],
     ['4-1001', 'Pendapatan Penjualan',    'PENDAPATAN',  'KREDIT'],
     ['5-1001', 'Harga Pokok Penjualan',   'BEBAN',       'DEBET'],
     ['5-1002', 'Beban Operasional',       'BEBAN',       'DEBET'],
     ['5-1003', 'Beban Gaji',              'BEBAN',       'DEBET'],
+    ['5-1004', 'Pembelian',               'BEBAN',       'DEBET'],
   ];
   for (const [kode, nama, jenis, saldo] of defaultCOA) {
     await conn.query(
