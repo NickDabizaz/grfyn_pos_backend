@@ -1,5 +1,6 @@
 const { tenantQuery, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeJual, generateKodePelunasanPiutang } = require('../../lib/kodetrans');
+const jurnalhelper = require('../../lib/jurnalhelper');
 const logger = require('../../lib/logger');
 
 function toKecilJml(jml, satuan, barang) {
@@ -50,6 +51,16 @@ function isAutoLunasJual(jual) {
 }
 
 async function deletePostedJual(conn, { idtenant, jual }) {
+  // Hapus jurnal penjualan + jurnal pelunasan otomatis yang terkait
+  const [pels] = await conn.query(
+    `SELECT pp.kodepelunasan
+     FROM pelunasanpiutang pp
+     JOIN pelunasanpiutangdtl ppdtl ON pp.idpelunasan = ppdtl.idpelunasan
+     WHERE ppdtl.kodetrans = ? AND pp.idtenant = ?`,
+    [jual.kodejual, idtenant]
+  );
+  await jurnalhelper.hapusJurnal(conn, idtenant, [jual.kodejual, ...pels.map(p => p.kodepelunasan)]);
+
   if (isAutoLunasJual(jual)) {
     await conn.query(
       `DELETE pp, ppdtl
@@ -75,6 +86,8 @@ exports.create = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    await jurnalhelper.ensureJurnalSchema(conn);
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
 
     const items          = req.body.items;
@@ -157,6 +170,13 @@ exports.create = async (req, res) => {
         [ctx.idtenant, idlokasi, idcustomer, kodejual, 'JUAL', grandTotal, langsungLunas ? grandTotal : 0, langsungLunas ? 0 : grandTotal, tgltrans, langsungLunas ? 'LUNAS' : 'OPEN']
       );
 
+      // Jurnal penjualan: DEBET Piutang; KREDIT Penjualan + PPN Keluaran
+      const [[ppnRow]] = await conn.query('SELECT COALESCE(SUM(ppn),0) AS totalppn FROM jualdtl WHERE idjual = ? AND idtenant = ?', [idjual, ctx.idtenant]);
+      await jurnalhelper.postJurnalPenjualan(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi, idjual, kodejual, jenis: 'jual',
+        tgltrans, grandtotal: grandTotal, totalppn: parseFloat(ppnRow.totalppn || 0),
+      });
+
       if (langsungLunas && grandTotal > 0) {
         const kodepelunasan = await generateKodePelunasanPiutang(conn, ctx.idtenant, idlokasi);
         const metodbayar    = req.body.metodbayar || 'TUNAI';
@@ -165,6 +185,14 @@ exports.create = async (req, res) => {
           [ctx.idtenant, idlokasi, idcustomer, kodepelunasan, tgltrans, grandTotal, metodbayar, `Pelunasan Langsung Jual ${kodejual}`, ctx.iduser]
         );
         await conn.query('INSERT INTO pelunasanpiutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)', [pelResult.insertId, kodejual, grandTotal]);
+
+        // Jurnal pelunasan piutang otomatis (akun pembayaran dari setting default)
+        const idakunBayar = jurnalhelper.resolveAkunBayar(akun, metodbayar);
+        await conn.query('INSERT INTO pelunasanpiutangbayar (idpelunasan, idtenant, idakun, amount) VALUES (?, ?, ?, ?)', [pelResult.insertId, ctx.idtenant, idakunBayar, grandTotal]);
+        await jurnalhelper.postJurnalPelunasanPiutang(conn, {
+          akun, idtenant: ctx.idtenant, idlokasi, idpelunasan: pelResult.insertId,
+          kodepelunasan, tgltrans, payments: [{ idakun: idakunBayar, amount: grandTotal }],
+        });
       }
     }
 
@@ -276,6 +304,8 @@ exports.update = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    await jurnalhelper.ensureJurnalSchema(conn);
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
 
     const { id }         = req.params;
@@ -320,6 +350,14 @@ exports.update = async (req, res) => {
     }
     await assertBpkCanBeUsed(conn, { idbpk: newIdbpk, idtenant: ctx.idtenant, currentIdjual: id });
 
+    // Hapus jurnal lama (penjualan + pelunasan otomatis) sebelum dibangun ulang
+    const [oldPels] = await conn.query(
+      `SELECT pp.kodepelunasan FROM pelunasanpiutang pp
+       JOIN pelunasanpiutangdtl ppdtl ON pp.idpelunasan = ppdtl.idpelunasan
+       WHERE ppdtl.kodetrans = ? AND pp.idtenant = ?`,
+      [kodejual, ctx.idtenant]
+    );
+    await jurnalhelper.hapusJurnal(conn, ctx.idtenant, [kodejual, ...oldPels.map(p => p.kodepelunasan)]);
     await conn.query(
       `DELETE pp, ppdtl FROM pelunasanpiutang pp
        JOIN pelunasanpiutangdtl ppdtl ON pp.idpelunasan = ppdtl.idpelunasan
@@ -381,6 +419,13 @@ exports.update = async (req, res) => {
         [ctx.idtenant, idlokasi, newIdcustomer, kodejual, 'JUAL', grandTotal, langsungLunas ? grandTotal : 0, langsungLunas ? 0 : grandTotal, tgltrans, langsungLunas ? 'LUNAS' : 'OPEN']
       );
 
+      // Jurnal penjualan: DEBET Piutang; KREDIT Penjualan + PPN Keluaran
+      const [[ppnRow]] = await conn.query('SELECT COALESCE(SUM(ppn),0) AS totalppn FROM jualdtl WHERE idjual = ? AND idtenant = ?', [id, ctx.idtenant]);
+      await jurnalhelper.postJurnalPenjualan(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi, idjual: id, kodejual, jenis: 'jual',
+        tgltrans, grandtotal: grandTotal, totalppn: parseFloat(ppnRow.totalppn || 0),
+      });
+
       if (langsungLunas && grandTotal > 0) {
         const kodepelunasan = await generateKodePelunasanPiutang(conn, ctx.idtenant, idlokasi);
         const metodbayar    = req.body.metodbayar || 'TUNAI';
@@ -389,6 +434,14 @@ exports.update = async (req, res) => {
           [ctx.idtenant, idlokasi, newIdcustomer, kodepelunasan, tgltrans, grandTotal, metodbayar, `Pelunasan Langsung Edit Jual ${kodejual}`, ctx.iduser]
         );
         await conn.query('INSERT INTO pelunasanpiutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)', [pelResult.insertId, kodejual, grandTotal]);
+
+        // Jurnal pelunasan piutang otomatis (akun pembayaran dari setting default)
+        const idakunBayar = jurnalhelper.resolveAkunBayar(akun, metodbayar);
+        await conn.query('INSERT INTO pelunasanpiutangbayar (idpelunasan, idtenant, idakun, amount) VALUES (?, ?, ?, ?)', [pelResult.insertId, ctx.idtenant, idakunBayar, grandTotal]);
+        await jurnalhelper.postJurnalPelunasanPiutang(conn, {
+          akun, idtenant: ctx.idtenant, idlokasi, idpelunasan: pelResult.insertId,
+          kodepelunasan, tgltrans, payments: [{ idakun: idakunBayar, amount: grandTotal }],
+        });
       }
     }
 
@@ -478,6 +531,8 @@ exports.approve = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    await jurnalhelper.ensureJurnalSchema(conn);
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
     const { id } = req.params;
 
@@ -523,6 +578,13 @@ exports.approve = async (req, res) => {
       [ctx.idtenant, jual.idlokasi, jual.idcustomer, jual.kodejual, 'JUAL', jual.grandtotal, bayarFinal, Math.max(parseFloat(jual.grandtotal || 0) - bayarFinal, 0), jual.tgltrans, bayarFinal > 0 ? 'LUNAS' : 'OPEN']
     );
 
+    // Jurnal penjualan: DEBET Piutang; KREDIT Penjualan + PPN Keluaran
+    const totalPpnJual = items.reduce((s, it) => s + parseFloat(it.ppn || 0), 0);
+    await jurnalhelper.postJurnalPenjualan(conn, {
+      akun, idtenant: ctx.idtenant, idlokasi: jual.idlokasi, idjual: id, kodejual: jual.kodejual,
+      jenis: 'jual', tgltrans: jual.tgltrans, grandtotal: parseFloat(jual.grandtotal || 0), totalppn: totalPpnJual,
+    });
+
     if (isAutoLunasJual(jual) && parseFloat(jual.grandtotal || 0) > 0) {
       const kodepelunasan = await generateKodePelunasanPiutang(conn, ctx.idtenant, jual.idlokasi);
       const [pelResult] = await conn.query(
@@ -530,6 +592,14 @@ exports.approve = async (req, res) => {
         [ctx.idtenant, jual.idlokasi, jual.idcustomer, kodepelunasan, jual.tgltrans, jual.grandtotal, 'TUNAI', `Pelunasan Langsung Jual ${jual.kodejual}`, ctx.iduser]
       );
       await conn.query('INSERT INTO pelunasanpiutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)', [pelResult.insertId, jual.kodejual, jual.grandtotal]);
+
+      // Jurnal pelunasan piutang otomatis (akun pembayaran dari setting default)
+      const idakunBayar = jurnalhelper.resolveAkunBayar(akun, 'TUNAI');
+      await conn.query('INSERT INTO pelunasanpiutangbayar (idpelunasan, idtenant, idakun, amount) VALUES (?, ?, ?, ?)', [pelResult.insertId, ctx.idtenant, idakunBayar, jual.grandtotal]);
+      await jurnalhelper.postJurnalPelunasanPiutang(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi: jual.idlokasi, idpelunasan: pelResult.insertId,
+        kodepelunasan, tgltrans: jual.tgltrans, payments: [{ idakun: idakunBayar, amount: parseFloat(jual.grandtotal || 0) }],
+      });
     }
 
     if (jual.idbpk) {

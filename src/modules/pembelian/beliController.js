@@ -1,5 +1,6 @@
 const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeBeli, generateKodePelunasanHutang }               = require('../../lib/kodetrans');
+const jurnalhelper                                                    = require('../../lib/jurnalhelper');
 const logger                                                          = require('../../lib/logger');
 
 // Konversi jumlah item ke satuan terkecil (satuankecil) untuk konsistensi kartu stok
@@ -54,6 +55,16 @@ function isAutoLunasBeli(beli) {
 }
 
 async function deletePostedBeli(conn, { idtenant, beli }) {
+  // Hapus jurnal pembelian + jurnal pelunasan otomatis yang terkait
+  const [pels] = await conn.query(
+    `SELECT ph.kodepelunasan
+     FROM pelunasanhutang ph
+     JOIN pelunasanhutangdtl phdtl ON ph.idpelunasan = phdtl.idpelunasan
+     WHERE phdtl.kodetrans = ? AND ph.idtenant = ?`,
+    [beli.kodebeli, idtenant]
+  );
+  await jurnalhelper.hapusJurnal(conn, idtenant, [beli.kodebeli, ...pels.map(p => p.kodepelunasan)]);
+
   if (isAutoLunasBeli(beli)) {
     await conn.query(
       `DELETE ph, phdtl
@@ -79,6 +90,8 @@ exports.create = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    await jurnalhelper.ensureJurnalSchema(conn);
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
 
     // 1. Ekstrak & Siapkan Data dari Request Body
@@ -197,6 +210,13 @@ exports.create = async (req, res) => {
         tgltrans,
         langsungLunas ? 'LUNAS' : 'OPEN',
       ]);
+
+      // Jurnal pembelian: DEBET Pembelian + PPN Masukan; KREDIT Hutang
+      const [[ppnRow]] = await conn.query('SELECT COALESCE(SUM(ppn),0) AS totalppn FROM belidtl WHERE idbeli = ? AND idtenant = ?', [idbeli, ctx.idtenant]);
+      await jurnalhelper.postJurnalPembelian(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi, idbeli, kodebeli,
+        tgltrans, grandtotal: grandTotal, totalppn: parseFloat(ppnRow.totalppn || 0),
+      });
     }
 
     // 6. Opsi Pelunasan Langsung (Jika Dicentang)
@@ -210,13 +230,20 @@ exports.create = async (req, res) => {
         'INSERT INTO pelunasanhutang (idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [ctx.idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, grandTotal, metodbayar, catatan, ctx.iduser]
       );
-      
+
       // Insert Pelunasan Detail
       await conn.query(
         'INSERT INTO pelunasanhutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)',
         [pelResult.insertId, kodebeli, grandTotal]
       );
 
+      // Jurnal pelunasan hutang otomatis (akun pembayaran dari setting default)
+      const idakunBayar = jurnalhelper.resolveAkunBayar(akun, metodbayar);
+      await conn.query('INSERT INTO pelunasanhutangbayar (idpelunasan, idtenant, idakun, amount) VALUES (?, ?, ?, ?)', [pelResult.insertId, ctx.idtenant, idakunBayar, grandTotal]);
+      await jurnalhelper.postJurnalPelunasanHutang(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi, idpelunasan: pelResult.insertId,
+        kodepelunasan, tgltrans, payments: [{ idakun: idakunBayar, amount: grandTotal }],
+      });
     }
 
     if (idbpb) {
@@ -343,6 +370,8 @@ exports.update = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    await jurnalhelper.ensureJurnalSchema(conn);
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
 
     const { id }         = req.params;
@@ -400,8 +429,16 @@ exports.update = async (req, res) => {
       JOIN pelunasanhutangdtl phdtl ON ph.idpelunasan = phdtl.idpelunasan
       WHERE phdtl.kodetrans = ?
     `;
+    // Hapus jurnal lama (pembelian + pelunasan otomatis) sebelum dibangun ulang
+    const [oldPels] = await conn.query(
+      `SELECT ph.kodepelunasan FROM pelunasanhutang ph
+       JOIN pelunasanhutangdtl phdtl ON ph.idpelunasan = phdtl.idpelunasan
+       WHERE phdtl.kodetrans = ? AND ph.idtenant = ?`,
+      [kodebeli, ctx.idtenant]
+    );
+    await jurnalhelper.hapusJurnal(conn, ctx.idtenant, [kodebeli, ...oldPels.map(p => p.kodepelunasan)]);
     await conn.query(queryDeletePelunasan, [kodebeli]);
-    
+
     // Hapus kartuhutang, stok, dan detail lama
     await conn.query('DELETE FROM kartuhutang WHERE kodetrans = ? AND idtenant = ?', [kodebeli, ctx.idtenant]);
     await conn.query("DELETE FROM kartustok WHERE idtrans = ? AND jenistransaksi = 'BELI' AND idtenant = ?", [id, ctx.idtenant]);
@@ -475,6 +512,13 @@ exports.update = async (req, res) => {
           langsungLunas ? 'LUNAS' : 'OPEN',
         ]
       );
+
+      // Jurnal pembelian: DEBET Pembelian + PPN Masukan; KREDIT Hutang
+      const [[ppnRow]] = await conn.query('SELECT COALESCE(SUM(ppn),0) AS totalppn FROM belidtl WHERE idbeli = ? AND idtenant = ?', [id, ctx.idtenant]);
+      await jurnalhelper.postJurnalPembelian(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi, idbeli: id, kodebeli,
+        tgltrans, grandtotal: grandTotal, totalppn: parseFloat(ppnRow.totalppn || 0),
+      });
     }
 
     // 7. Jika Checkbox Lunas Dicentang, Buat Pelunasan
@@ -492,6 +536,13 @@ exports.update = async (req, res) => {
         [pelResult.insertId, kodebeli, grandTotal]
       );
 
+      // Jurnal pelunasan hutang otomatis (akun pembayaran dari setting default)
+      const idakunBayar = jurnalhelper.resolveAkunBayar(akun, metodbayar);
+      await conn.query('INSERT INTO pelunasanhutangbayar (idpelunasan, idtenant, idakun, amount) VALUES (?, ?, ?, ?)', [pelResult.insertId, ctx.idtenant, idakunBayar, grandTotal]);
+      await jurnalhelper.postJurnalPelunasanHutang(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi, idpelunasan: pelResult.insertId,
+        kodepelunasan, tgltrans, payments: [{ idakun: idakunBayar, amount: grandTotal }],
+      });
     }
 
     if (newIdbpb) {
@@ -587,6 +638,8 @@ exports.approve = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
+    await jurnalhelper.ensureJurnalSchema(conn);
+    const akun = await jurnalhelper.getDefaultAkunJurnal(conn, ctx.idtenant);
     await conn.beginTransaction();
     const { id } = req.params;
 
@@ -632,6 +685,13 @@ exports.approve = async (req, res) => {
       [ctx.idtenant, beli.idlokasi, beli.idsupplier, beli.kodebeli, 'BELI', beli.grandtotal, bayarFinal, Math.max(parseFloat(beli.grandtotal || 0) - bayarFinal, 0), beli.tgltrans, bayarFinal > 0 ? 'LUNAS' : 'OPEN']
     );
 
+    // Jurnal pembelian: DEBET Pembelian + PPN Masukan; KREDIT Hutang
+    const totalPpnBeli = items.reduce((s, it) => s + parseFloat(it.ppn || 0), 0);
+    await jurnalhelper.postJurnalPembelian(conn, {
+      akun, idtenant: ctx.idtenant, idlokasi: beli.idlokasi, idbeli: id, kodebeli: beli.kodebeli,
+      tgltrans: beli.tgltrans, grandtotal: parseFloat(beli.grandtotal || 0), totalppn: totalPpnBeli,
+    });
+
     if (isAutoLunasBeli(beli) && parseFloat(beli.grandtotal || 0) > 0) {
       const kodepelunasan = await generateKodePelunasanHutang(conn, ctx.idtenant, beli.idlokasi);
       const [pelResult] = await conn.query(
@@ -639,6 +699,14 @@ exports.approve = async (req, res) => {
         [ctx.idtenant, beli.idlokasi, beli.idsupplier, kodepelunasan, beli.tgltrans, beli.grandtotal, 'TUNAI', `Pelunasan Langsung Beli ${beli.kodebeli}`, ctx.iduser]
       );
       await conn.query('INSERT INTO pelunasanhutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)', [pelResult.insertId, beli.kodebeli, beli.grandtotal]);
+
+      // Jurnal pelunasan hutang otomatis (akun pembayaran dari setting default)
+      const idakunBayar = jurnalhelper.resolveAkunBayar(akun, 'TUNAI');
+      await conn.query('INSERT INTO pelunasanhutangbayar (idpelunasan, idtenant, idakun, amount) VALUES (?, ?, ?, ?)', [pelResult.insertId, ctx.idtenant, idakunBayar, beli.grandtotal]);
+      await jurnalhelper.postJurnalPelunasanHutang(conn, {
+        akun, idtenant: ctx.idtenant, idlokasi: beli.idlokasi, idpelunasan: pelResult.insertId,
+        kodepelunasan, tgltrans: beli.tgltrans, payments: [{ idakun: idakunBayar, amount: parseFloat(beli.grandtotal || 0) }],
+      });
     }
 
     if (beli.idbpb) {

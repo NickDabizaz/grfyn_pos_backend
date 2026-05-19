@@ -1,18 +1,27 @@
-// Controller untuk transaksi kas — mencatat pemasukan dan pengeluaran beserta jurnal akuntansi
-// Endpoint: GET /getAll, GET /getOne/:id, POST /create, PUT /update/:id, DELETE /remove/:id
-const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require('../../config/db');
+// Controller untuk transaksi kas — mencatat pemasukan/pengeluaran beserta jurnal akuntansi.
+// Alur status: DRAFT -> APPROVED (jurnal diposting saat approve) / CANCELLED.
+const { tenantQuery, getConnection, getTenantContext } = require('../../config/db');
 const { generateKodeKas } = require('../../lib/kodetrans');
+const jurnalhelper = require('../../lib/jurnalhelper');
 const logger = require('../../lib/logger');
 
-// GET — Mendapatkan daftar transaksi kas dengan filter pencarian kode
+// Membangun baris jurnal dari detail kas (positif -> DEBET, negatif -> KREDIT)
+function buildJurnalLines(details) {
+  return (details || []).map(d => {
+    const amt = parseFloat(d.amount) || 0;
+    return { idakun: d.idakun, posisi: amt >= 0 ? 'DEBET' : 'KREDIT', amount: Math.abs(amt) };
+  });
+}
+
+// GET — Daftar transaksi kas dengan filter pencarian kode & status
 exports.getAll = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    const { search } = req.query;
-    let sql = 'SELECT k.* FROM kas k WHERE 1=1';
-    const params = [];
-    sql += ' AND k.idlokasi = ?'; params.push(ctx.idlokasi);
+    const { search, status } = req.query;
+    let sql = 'SELECT k.* FROM kas k WHERE k.idlokasi = ?';
+    const params = [ctx.idlokasi];
     if (search) { sql += ' AND k.kodekas LIKE ?'; params.push(`%${search}%`); }
+    if (status) { sql += ' AND k.status = ?'; params.push(status); }
     sql += ' ORDER BY k.idkas DESC';
     const rows = await tenantQuery(sql, params);
     res.json(rows);
@@ -22,19 +31,20 @@ exports.getAll = async (req, res) => {
   }
 };
 
-// GET — Mendapatkan detail satu transaksi kas beserta rincian akun dan jurnalnya
+// GET — Detail satu transaksi kas beserta rincian akun
 exports.getOne = async (req, res) => {
   try {
     const ctx = getTenantContext();
-    let sql = 'SELECT k.* FROM kas k WHERE k.idkas = ? AND k.idlokasi = ?';
-    const rows = await tenantQuery(sql, [req.params.id, ctx.idlokasi]);
+    const rows = await tenantQuery(
+      'SELECT k.* FROM kas k WHERE k.idkas = ? AND k.idlokasi = ?',
+      [req.params.id, ctx.idlokasi]
+    );
     if (rows.length === 0) return res.status(404).json({ message: 'Kas tidak ditemukan' });
 
-    let sql2 = 'SELECT kd.*, a.kodeakun, a.namaakun FROM kasdtl kd JOIN akun a ON kd.idakun = a.idakun AND a.idtenant = kd.idtenant WHERE kd.idkas = ?';
-    const details = await tenantQuery(sql2,
+    const details = await tenantQuery(
+      'SELECT kd.*, a.kodeakun, a.namaakun FROM kasdtl kd JOIN akun a ON kd.idakun = a.idakun AND a.idtenant = kd.idtenant WHERE kd.idkas = ?',
       [req.params.id]
     );
-
     res.json({ ...rows[0], details });
   } catch (err) {
     logger.error(err, { req });
@@ -42,58 +52,56 @@ exports.getOne = async (req, res) => {
   }
 };
 
-// POST — Membuat transaksi kas baru. Menyimpan header, detail akun, dan entri jurnal akuntansi.
+// POST — Membuat transaksi kas. Status DRAFT, atau APPROVED bila approve=true.
 exports.create = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
     await conn.beginTransaction();
     const { details } = req.body;
-
-    // Generate kode kas unik
+    if (!details || !details.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Detail kas tidak boleh kosong' });
+    }
+    const approve = req.body.approve === true || req.body.status === 'APPROVED';
+    const statusKas = approve ? 'APPROVED' : 'DRAFT';
     const kodekas = await generateKodeKas(conn, ctx.idtenant, ctx.idlokasi);
-    const tgltrans = new Date().toISOString().slice(0, 10);
+    const tgltrans = req.body.tgltrans || new Date().toISOString().slice(0, 10);
 
-    // Insert header kas
-    let sql = 'INSERT INTO kas (idtenant, idlokasi, kodekas, tgltrans, iduser, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)';
-    const [result] = await conn.query(sql,
-      [ctx.idtenant, ctx.idlokasi, kodekas, tgltrans, ctx.iduser, 'AKTIF', ctx.iduser]
+    const [result] = await conn.query(
+      'INSERT INTO kas (idtenant, idlokasi, kodekas, tgltrans, iduser, status, userentry) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [ctx.idtenant, ctx.idlokasi, kodekas, tgltrans, ctx.iduser, statusKas, ctx.iduser]
     );
-    // ID kas dari auto-increment
     const idkas = result.insertId;
 
     for (const d of details) {
-      // Insert detail per akun
-      let sql2 = 'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)';
-      await conn.query(sql2,
+      await conn.query(
+        'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)',
         [idkas, ctx.idtenant, d.idakun, d.catatan || '', d.amount]
-      );
-
-      // Tentukan posisi jurnal: akun KAS selalu DEBET, akun lain lihat tanda amount (>= 0 → DEBET, < 0 → KREDIT)
-      let sql3 = 'SELECT namaakun FROM akun WHERE idakun = ? AND idtenant = ?';
-      const [[akun]] = await conn.query(sql3, [d.idakun, ctx.idtenant]);
-      const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
-
-      // Insert entri jurnal dengan amount absolut
-      let sql4 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql4,
-        [ctx.idtenant, ctx.idlokasi, idkas, kodekas, 'kas', tgltrans, d.idakun, posisi, Math.abs(d.amount)]
       );
     }
 
+    // Jurnal hanya diposting saat APPROVED (divalidasi balance DEBET == KREDIT)
+    if (approve) {
+      await jurnalhelper.postJurnal(conn, {
+        idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, idtrans: idkas, kodetrans: kodekas,
+        jenis: 'kas', tgltrans, lines: buildJurnalLines(details),
+      });
+    }
+
     await conn.commit();
-    await logger.history('KAS_CREATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: kodekas, req });
-    res.status(201).json({ message: 'Kas berhasil ditambah', idkas, kodekas });
+    await logger.history('KAS_CREATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: kodekas, detail: { status: statusKas }, req });
+    res.status(201).json({ message: 'Kas berhasil ditambah', idkas, kodekas, status: statusKas });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   } finally {
     conn.release();
   }
 };
 
-// PUT — Memperbarui transaksi kas: menghapus jurnal & detail lama, lalu menyimpan ulang
+// PUT — Edit transaksi kas (hanya status DRAFT)
 exports.update = async (req, res) => {
   const conn = await getConnection();
   try {
@@ -102,58 +110,184 @@ exports.update = async (req, res) => {
     const { details } = req.body;
     const { id } = req.params;
 
-    let sql = 'SELECT * FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?';
-    const [rows] = await conn.query(sql, [id, ctx.idtenant, ctx.idlokasi]);
-    if (rows.length === 0) return res.status(404).json({ message: 'Kas tidak ditemukan' });
+    if (!details || !details.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Detail kas tidak boleh kosong' });
+    }
 
-    // Hapus jurnal dan detail lama sebelum insert ulang
-    let sql2 = "DELETE FROM jurnal WHERE jenis = ? AND idtrans = ? AND idtenant = ? AND idlokasi = ?";
-    await conn.query(sql2, ['kas', id, ctx.idtenant, ctx.idlokasi]);
-    let sql3 = 'DELETE FROM kasdtl WHERE idkas = ? AND idtenant = ?';
-    await conn.query(sql3, [id, ctx.idtenant]);
+    const [[kas]] = await conn.query('SELECT * FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?', [id, ctx.idtenant, ctx.idlokasi]);
+    if (!kas) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Kas tidak ditemukan' });
+    }
+    if (kas.status === 'CANCELLED') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Kas sudah dibatalkan' });
+    }
+    if (kas.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Kas DRAFT yang bisa diedit' });
+    }
 
+    const approve = req.body.approve === true || req.body.status === 'APPROVED';
+    const tgltrans = req.body.tgltrans || String(kas.tgltrans).slice(0, 10);
+
+    await conn.query('DELETE FROM kasdtl WHERE idkas = ? AND idtenant = ?', [id, ctx.idtenant]);
     for (const d of details) {
-      let sql4 = 'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)';
-      await conn.query(sql4,
+      await conn.query(
+        'INSERT INTO kasdtl (idkas, idtenant, idakun, catatan, amount) VALUES (?, ?, ?, ?, ?)',
         [id, ctx.idtenant, d.idakun, d.catatan || '', d.amount]
       );
+    }
+    await conn.query('UPDATE kas SET tgltrans = ?, status = ? WHERE idkas = ? AND idtenant = ?', [tgltrans, approve ? 'APPROVED' : 'DRAFT', id, ctx.idtenant]);
 
-      let sql5 = 'SELECT namaakun FROM akun WHERE idakun = ? AND idtenant = ?';
-      const [[akun]] = await conn.query(sql5, [d.idakun, ctx.idtenant]);
-      const posisi = akun && akun.namaakun === 'KAS' ? 'DEBET' : (d.amount >= 0 ? 'DEBET' : 'KREDIT');
-
-      let sql6 = 'INSERT INTO jurnal (idtenant, idlokasi, idtrans, kodetrans, jenis, tgltrans, idakun, posisi, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      await conn.query(sql6,
-        [ctx.idtenant, ctx.idlokasi, id, rows[0].kodekas, 'kas', rows[0].tgltrans, d.idakun, posisi, Math.abs(d.amount)]
-      );
+    if (approve) {
+      await jurnalhelper.postJurnal(conn, {
+        idtenant: ctx.idtenant, idlokasi: kas.idlokasi, idtrans: id, kodetrans: kas.kodekas,
+        jenis: 'kas', tgltrans, lines: buildJurnalLines(details),
+      });
     }
 
     await conn.commit();
-    await logger.history('KAS_UPDATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: rows[0].kodekas, req });
+    await logger.history('KAS_UPDATE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: kas.kodekas, req });
     res.json({ message: 'Kas berhasil diupdate' });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   } finally {
     conn.release();
   }
 };
 
-// DELETE — Menghapus transaksi kas beserta jurnal dan detailnya secara langsung (hard delete)
+// PUT /:id/approve — DRAFT -> APPROVED, posting jurnal
+exports.approve = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[kas]] = await conn.query('SELECT * FROM kas WHERE idkas = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!kas) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Kas tidak ditemukan' });
+    }
+    if (kas.status !== 'DRAFT') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Kas DRAFT yang bisa di-approve' });
+    }
+
+    const [dtl] = await conn.query('SELECT idakun, amount FROM kasdtl WHERE idkas = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!dtl.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Detail kas kosong' });
+    }
+
+    await jurnalhelper.postJurnal(conn, {
+      idtenant: ctx.idtenant, idlokasi: kas.idlokasi, idtrans: id, kodetrans: kas.kodekas,
+      jenis: 'kas', tgltrans: kas.tgltrans, lines: buildJurnalLines(dtl),
+    });
+    await conn.query("UPDATE kas SET status = 'APPROVED' WHERE idkas = ? AND idtenant = ?", [id, ctx.idtenant]);
+
+    await conn.commit();
+    await logger.history('KAS_APPROVE', { idtenant: ctx.idtenant, idlokasi: kas.idlokasi, iduser: ctx.iduser, ref: kas.kodekas, req });
+    res.json({ message: 'Kas berhasil di-approve' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+// PUT /:id/unapprove — APPROVED -> DRAFT, hapus jurnal
+exports.unapprove = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[kas]] = await conn.query('SELECT * FROM kas WHERE idkas = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!kas) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Kas tidak ditemukan' });
+    }
+    if (kas.status !== 'APPROVED') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Hanya Kas APPROVED yang bisa batal approve' });
+    }
+
+    await jurnalhelper.hapusJurnal(conn, ctx.idtenant, [kas.kodekas]);
+    await conn.query("UPDATE kas SET status = 'DRAFT' WHERE idkas = ? AND idtenant = ?", [id, ctx.idtenant]);
+
+    await conn.commit();
+    await logger.history('KAS_UNAPPROVE', { idtenant: ctx.idtenant, idlokasi: kas.idlokasi, iduser: ctx.iduser, ref: kas.kodekas, req });
+    res.json({ message: 'Approve Kas dibatalkan' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+// PUT /:id/cancel — DRAFT -> CANCELLED
+exports.cancel = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+    const { id } = req.params;
+
+    const [[kas]] = await conn.query('SELECT * FROM kas WHERE idkas = ? AND idtenant = ?', [id, ctx.idtenant]);
+    if (!kas) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Kas tidak ditemukan' });
+    }
+    if (kas.status === 'CANCELLED') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Kas sudah dibatalkan' });
+    }
+    if (kas.status === 'APPROVED') {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Kas APPROVED harus batal approve dulu sebelum dibatalkan' });
+    }
+
+    await conn.query("UPDATE kas SET status = 'CANCELLED' WHERE idkas = ? AND idtenant = ?", [id, ctx.idtenant]);
+
+    await conn.commit();
+    await logger.history('KAS_CANCEL', { idtenant: ctx.idtenant, idlokasi: kas.idlokasi, iduser: ctx.iduser, ref: kas.kodekas, req });
+    res.json({ message: 'Kas berhasil dibatalkan' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+// DELETE — Hapus permanen transaksi kas (tidak boleh saat status APPROVED)
 exports.remove = async (req, res) => {
   const conn = await getConnection();
   try {
     const ctx = getTenantContext();
-    let sql = "DELETE FROM jurnal WHERE jenis = ? AND idtrans = ? AND idtenant = ? AND idlokasi = ?";
-    await conn.query(sql, ['kas', req.params.id, ctx.idtenant, ctx.idlokasi]);
-    let sql2 = 'DELETE FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?';
-    await conn.query(sql2, [req.params.id, ctx.idtenant, ctx.idlokasi]);
-    await logger.history('KAS_DELETE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: String(req.params.id), req });
+    const [[kas]] = await conn.query('SELECT kodekas, status FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?', [req.params.id, ctx.idtenant, ctx.idlokasi]);
+    if (!kas) return res.status(404).json({ message: 'Kas tidak ditemukan' });
+    if (kas.status === 'APPROVED') {
+      return res.status(400).json({ message: 'Kas APPROVED harus batal approve dulu sebelum dihapus' });
+    }
+    await jurnalhelper.hapusJurnal(conn, ctx.idtenant, [kas.kodekas]);
+    await conn.query('DELETE FROM kas WHERE idkas = ? AND idtenant = ? AND idlokasi = ?', [req.params.id, ctx.idtenant, ctx.idlokasi]);
+    await logger.history('KAS_DELETE', { idtenant: ctx.idtenant, idlokasi: ctx.idlokasi, iduser: ctx.iduser, ref: kas.kodekas, req });
     res.json({ message: 'Kas berhasil dihapus' });
   } catch (err) {
     logger.error(err, { req });
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   } finally {
     conn.release();
   }

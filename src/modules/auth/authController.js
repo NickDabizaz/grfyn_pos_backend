@@ -14,15 +14,30 @@ const DEFAULT_COA = [
   ['1-1002', 'Bank',                    'ASET',        'DEBET'],
   ['1-1003', 'Piutang Usaha',           'ASET',        'DEBET'],
   ['1-1004', 'Persediaan Barang',       'ASET',        'DEBET'],
+  ['1-1005', 'PPN Masukan',             'ASET',        'DEBET'],
   ['2-1001', 'Hutang Usaha',            'LIABILITAS',  'KREDIT'],
   ['2-1002', 'Hutang Gaji',             'LIABILITAS',  'KREDIT'],
+  ['2-1003', 'PPN Keluaran',            'LIABILITAS',  'KREDIT'],
   ['3-1001', 'Modal',                   'EKUITAS',     'KREDIT'],
   ['3-1002', 'Laba Ditahan',            'EKUITAS',     'KREDIT'],
   ['4-1001', 'Pendapatan Penjualan',    'PENDAPATAN',  'KREDIT'],
   ['5-1001', 'Harga Pokok Penjualan',   'BEBAN',       'DEBET'],
   ['5-1002', 'Beban Operasional',       'BEBAN',       'DEBET'],
   ['5-1003', 'Beban Gaji',              'BEBAN',       'DEBET'],
+  ['5-1004', 'Pembelian',               'BEBAN',       'DEBET'],
 ];
+
+// Pemetaan akun default jurnal (config modul JURNAL) -> kode akun pada DEFAULT_COA
+const DEFAULT_JURNAL_AKUN = {
+  AKUN_PIUTANG     : '1-1003',
+  AKUN_PENJUALAN   : '4-1001',
+  AKUN_PPN_KELUARAN: '2-1003',
+  AKUN_HUTANG      : '2-1001',
+  AKUN_PEMBELIAN   : '5-1004',
+  AKUN_PPN_MASUKAN : '1-1005',
+  AKUN_KAS         : '1-1001',
+  AKUN_BANK        : '1-1002',
+};
 
 function upperOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -294,6 +309,17 @@ exports.register = async (req, res) => {
     await setConfigValue(conn, idtenant, 'BARANG', 'PAKAIBAHANBAKU', 'YA', 1);
     await setConfigValue(conn, idtenant, 'GLOBAL', 'PAKAIPPN', 'YA', 1);
     await setConfigValue(conn, idtenant, 'POS', 'HARGA_INCLUDE_PPN', 'YA', 1);
+
+    // 7b. Seed setting akun default jurnal (modul JURNAL) berdasarkan COA default
+    for (const [configName, kodeakun] of Object.entries(DEFAULT_JURNAL_AKUN)) {
+      const [[akun]] = await conn.query(
+        'SELECT idakun FROM akun WHERE idtenant = ? AND kodeakun = ? LIMIT 1',
+        [idtenant, kodeakun]
+      );
+      if (akun) {
+        await setConfigValue(conn, idtenant, 'JURNAL', configName, String(akun.idakun), 1);
+      }
+    }
 
     await conn.commit();
 

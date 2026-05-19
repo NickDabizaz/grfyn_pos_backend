@@ -1,11 +1,22 @@
 /**
  * Library untuk generate kode transaksi dengan format: PREFIX.KODELOKASI.TGL.NOMOR
  * Contoh: JL.A01.250510.001 (Jual lokasi A01 tanggal 10 Mei 2025 nomor 001)
- * Menggunakan LOCK TABLES untuk mencegah race condition pada penomoran.
+ * Menggunakan advisory lock (GET_LOCK) untuk mencegah race condition penomoran.
  *
  * Fungsi yang diekspor: generateKode (umum), generateKodeMaster (kode master data),
  * generateKodeClosing, generateKodeHitungHPP, serta fungsi spesifik per jenis transaksi.
  */
+
+// Menjalankan fn sambil memegang advisory lock MySQL. Berbeda dengan LOCK TABLES,
+// GET_LOCK/RELEASE_LOCK tidak memicu implicit commit sehingga transaksi tetap utuh.
+async function withKodeLock(conn, lockName, fn) {
+  await conn.query('SELECT GET_LOCK(?, 10) AS l', [lockName]);
+  try {
+    return await fn();
+  } finally {
+    await conn.query('SELECT RELEASE_LOCK(?) AS r', [lockName]);
+  }
+}
 
 // Fungsi inti: generate kode transaksi dengan format PREFIX.KODELOKASI.YYMMDD.NNN
 async function generateKode(conn, prefix, idtenant, idlokasi, table, column) {
@@ -22,15 +33,11 @@ async function generateKode(conn, prefix, idtenant, idlokasi, table, column) {
   );
   const kdlok = lokasi.kodelokasi;
 
+  table = table.toLowerCase(); // Nama tabel case-sensitive di sebagian OS
   const kodepattern = `${prefix}.${kdlok}.${dateStr}.%`;
 
-  // Lock tabel untuk mencegah duplikasi nomor oleh concurrent request
-  let sql2 = `LOCK TABLES ${table} WRITE`;
-  await conn.query(sql2);
-
-  table = table.toLowerCase(); // Pastikan nama tabel dalam query sesuai dengan yang ada di database (case-sensitive)
-
-  try {
+  // Advisory lock per tenant+tabel — cegah duplikasi nomor tanpa memutus transaksi
+  return withKodeLock(conn, `kodegen:${idtenant}:${table}`, async () => {
     // Cari nomor terakhir untuk prefix+kodelokasi+tanggal yang sama
     let sql3 = `SELECT MAX(${column}) as maxKode FROM ${table}
        WHERE idtenant = ? AND idlokasi = ? AND ${column} LIKE ?`;
@@ -44,13 +51,8 @@ async function generateKode(conn, prefix, idtenant, idlokasi, table, column) {
       num = parseInt(parts[parts.length - 1]) + 1;
     }
 
-    const kode = `${prefix}.${kdlok}.${dateStr}.${String(num).padStart(3, '0')}`;
-
-    return kode;
-  } finally {
-    let sql4 = 'UNLOCK TABLES';
-    await conn.query(sql4);
-  }
+    return `${prefix}.${kdlok}.${dateStr}.${String(num).padStart(3, '0')}`;
+  });
 }
 
 // Generate kode penjualan: format JL.KODELOKASI.YYMMDD.NNN
@@ -93,10 +95,7 @@ async function generateKodeClosing(conn, idtenant, idlokasi) {
 
   const kodepattern = `CL.${kdlok}.${dateStr}.%`;
 
-  let sql2 = 'LOCK TABLES closing WRITE';
-  await conn.query(sql2);
-
-  try {
+  return withKodeLock(conn, `kodegen:${idtenant}:closing`, async () => {
     let sql3 = `SELECT MAX(kodeclosing) as maxKode FROM closing
        WHERE idtenant = ? AND idlokasi = ? AND kodeclosing LIKE ?`;
     const [[{ maxKode }]] = await conn.query(sql3,
@@ -110,10 +109,7 @@ async function generateKodeClosing(conn, idtenant, idlokasi) {
     }
 
     return `CL.${kdlok}.${dateStr}.${String(num).padStart(3, '0')}`;
-  } finally {
-    let sql4 = 'UNLOCK TABLES';
-    await conn.query(sql4);
-  }
+  });
 }
 
 // Generate kode master data (barang, customer, supplier, dll): format PREFIXNNNN (tanpa lokasi dan tanggal)
@@ -145,9 +141,7 @@ async function generateKodeHitungHPP(conn, idtenant, idlokasi, periodbulan) {
   const kdlok = lokasi.kodelokasi;
   const pattern = `HPP.${kdlok}.${dateStr}.%`;
 
-  let sql2 = 'LOCK TABLES hitunghpp WRITE';
-  await conn.query(sql2);
-  try {
+  return withKodeLock(conn, `kodegen:${idtenant}:hitunghpp`, async () => {
     let sql3 = `SELECT MAX(kodehitunghpp) as maxKode FROM hitunghpp
        WHERE idtenant = ? AND idlokasi = ? AND kodehitunghpp LIKE ?`;
     const [[{ maxKode }]] = await conn.query(sql3,
@@ -159,10 +153,7 @@ async function generateKodeHitungHPP(conn, idtenant, idlokasi, periodbulan) {
       num = parseInt(parts[parts.length - 1]) + 1;
     }
     return `HPP.${kdlok}.${dateStr}.${String(num).padStart(3, '0')}`;
-  } finally {
-    let sql4 = 'UNLOCK TABLES';
-    await conn.query(sql4);
-  }
+  });
 }
 
 // Generate kode retur penjualan: format RJ.KODELOKASI.YYMMDD.NNN
@@ -241,8 +232,7 @@ async function generateKodePayroll(conn, idtenant, idlokasi) {
   const kdlok = lokasi.kodelokasi;
   const pattern = `PAY.${kdlok}.${dateStr}.%`;
 
-  await conn.query('LOCK TABLES payroll WRITE');
-  try {
+  return withKodeLock(conn, `kodegen:${idtenant}:payroll`, async () => {
     const [[{ maxKode }]] = await conn.query(
       `SELECT MAX(kodepayroll) as maxKode FROM payroll WHERE idtenant = ? AND idlokasi = ? AND kodepayroll LIKE ?`,
       [idtenant, idlokasi, pattern]
@@ -250,9 +240,7 @@ async function generateKodePayroll(conn, idtenant, idlokasi) {
     let num = 1;
     if (maxKode) num = parseInt(maxKode.split('.').pop()) + 1;
     return `PAY.${kdlok}.${dateStr}.${String(num).padStart(3, '0')}`;
-  } finally {
-    await conn.query('UNLOCK TABLES');
-  }
+  });
 }
 
 module.exports = {

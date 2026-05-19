@@ -15,6 +15,8 @@ const jualSchema = z.object({
   tgltrans      : z.string().optional(),
   approve       : z.boolean().optional(),
   is_lunaslangsung: z.boolean().optional(),
+  langsung_lunas: z.boolean().optional(),
+  metodbayar    : z.string().optional(),
   idbpk         : z.number().int().positive().optional().nullable(),
   kodebpk       : z.string().optional().nullable(),
   jalurpenjualan: z.enum(['PESANAN', 'LANGSUNG']).optional(),
