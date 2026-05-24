@@ -124,6 +124,22 @@ if (process.env.DEVELOPER_PORTAL_ENABLED !== 'false') {
   app.use('/developer', developerRoutes);
 }
 
+app.get('/subscription', (req, res) => {
+  const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const redirectUrl = new URL('/app', `${frontendBase}/`);
+
+  Object.entries(req.query || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => redirectUrl.searchParams.append(key, item));
+    } else if (value !== undefined) {
+      redirectUrl.searchParams.set(key, value);
+    }
+  });
+  redirectUrl.searchParams.set('open', 'subscription');
+
+  res.redirect(302, redirectUrl.toString());
+});
+
 // Global error handler
 app.use((err, req, res, next) => {
   logger.error(err, { req });
