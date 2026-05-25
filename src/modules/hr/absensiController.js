@@ -85,6 +85,45 @@ exports.update = async (req, res) => {
   }
 };
 
+// DELETE /absensi/:id — Hapus absensi (cek tidak ada payroll POSTED di bulan yang sama)
+exports.remove = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+
+    const [[absensi]] = await conn.query(
+      'SELECT * FROM absensi WHERE idabsensi = ? AND idtenant = ?',
+      [req.params.id, ctx.idtenant]
+    );
+    if (!absensi) return res.status(404).json({ message: 'Absensi tidak ditemukan' });
+
+    // Cek apakah sudah ada payroll POSTED untuk bulan ini
+    const tglStr = absensi.tglabsensi instanceof Date
+      ? absensi.tglabsensi.toISOString().slice(0, 7)
+      : String(absensi.tglabsensi).slice(0, 7);
+    const periodbulan = tglStr;
+    const [[postedPayroll]] = await conn.query(
+      "SELECT idpayroll FROM payroll WHERE idtenant = ? AND idlokasi = ? AND periodbulan = ? AND status = 'POSTED' LIMIT 1",
+      [ctx.idtenant, ctx.idlokasi, periodbulan]
+    );
+    if (postedPayroll) {
+      return res.status(400).json({ message: `Payroll ${periodbulan} sudah diposting. Unpost payroll dulu sebelum menghapus absensi.` });
+    }
+
+    await conn.query('DELETE FROM absensi WHERE idabsensi = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
+
+    await conn.commit();
+    res.json({ message: 'Absensi berhasil dihapus' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
 // GET /absensi/rekap — Rekap absensi per karyawan per bulan
 exports.rekapBulanan = async (req, res) => {
   try {

@@ -11,5 +11,6 @@ router.get('/rekap', requireAccess('sdm.absensi', 'hakakses'), ctrl.rekapBulanan
 router.get('/', requireAccess('sdm.absensi', 'hakakses'), ctrl.getAll);
 router.post('/', requireAccess('sdm.absensi', 'tambah'), requireTransactionQuota(), ctrl.create);
 router.put('/:id', requireAccess('sdm.absensi', 'ubah'), ctrl.update);
+router.delete('/:id', requireAccess('sdm.absensi', 'ubah'), ctrl.remove);
 
 module.exports = router;
