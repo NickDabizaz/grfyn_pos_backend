@@ -14,6 +14,7 @@ const systemController = require('./controllers/systemController');
 const tenantController = require('./controllers/tenantController');
 const dbConsoleController = require('./controllers/dbConsoleController');
 const maintenanceController = require('./controllers/maintenanceController');
+const subscriptionMgmtController = require('./controllers/subscriptionMgmtController');
 
 const router = express.Router();
 
@@ -65,5 +66,10 @@ router.post('/db-console', dbConsoleController.execute);
 
 router.get('/maintenance', maintenanceController.index);
 router.post('/maintenance/clear-logs', maintenanceController.clearOldLogs);
+
+router.get('/subscriptions', subscriptionMgmtController.index);
+router.post('/subscriptions/set', subscriptionMgmtController.setSubscription);
+router.get('/subscriptions/:idtenant', subscriptionMgmtController.tenantDetail);
+router.post('/subscriptions/:idtenant/extend', subscriptionMgmtController.extendSubscription);
 
 module.exports = router;

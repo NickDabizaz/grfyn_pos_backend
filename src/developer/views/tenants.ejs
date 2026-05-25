@@ -25,6 +25,7 @@
             <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Trans Jual</th>
             <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Trans Beli</th>
             <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Last Activity</th>
+            <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Plan</th>
             <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Status</th>
             <th class="text-right px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Backup</th>
           </tr>
@@ -44,6 +45,22 @@
             <td class="px-4 py-3 text-xs text-gray-400">
               <% const la = [t.last_jual, t.last_beli].filter(Boolean).sort().reverse(); %>
               <%= la.length > 0 ? new Date(la[0]).toLocaleDateString('id-ID') : '-' %>
+            </td>
+            <td class="px-4 py-3 text-center">
+              <%
+                const isPro = t.subscription_plan === 'PRO';
+                const subExp = t.subscription_expires_at ? new Date(t.subscription_expires_at) : null;
+                const isExpired = isPro && subExp && subExp < new Date();
+              %>
+              <% if (isPro && !isExpired) { %>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/25">
+                  <i data-lucide="crown" class="w-3 h-3"></i> PRO
+                </span>
+              <% } else if (isExpired) { %>
+                <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400">EXPIRED</span>
+              <% } else { %>
+                <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-gray-700/50 text-gray-500">FREE</span>
+              <% } %>
             </td>
             <td class="px-4 py-3 text-center">
               <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium <%= t.status === 'AKTIF' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400' %>"><%= t.status %></span>

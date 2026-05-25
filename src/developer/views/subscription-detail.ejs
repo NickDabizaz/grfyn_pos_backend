@@ -1,0 +1,198 @@
+<% if (locals.success) { %>
+  <div id="flash-success" class="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-sm text-green-400 flex items-center gap-2">
+    <i data-lucide="check-circle" class="w-4 h-4 shrink-0"></i>
+    <%= success %>
+  </div>
+<% } %>
+<% if (locals.error) { %>
+  <div class="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400 flex items-center gap-2">
+    <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
+    <%= error %>
+  </div>
+<% } %>
+
+<div class="mb-6 flex items-center gap-3">
+  <a href="/developer/subscriptions" class="p-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+    <i data-lucide="arrow-left" class="w-4 h-4"></i>
+  </a>
+  <div>
+    <h1 class="text-xl font-bold text-white"><%= tenant.namatenant %></h1>
+    <p class="text-sm text-gray-500 mt-0.5">Subscription detail & payment history</p>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+  <!-- Current Plan -->
+  <div class="lg:col-span-2 bg-gray-900 border <%= tenant.isPro && !tenant.isExpired ? 'border-green-500/30' : 'border-gray-800' %> rounded-xl p-5">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <div class="text-xs text-gray-500 mb-1">Paket Saat Ini</div>
+        <div class="flex items-center gap-2">
+          <% if (tenant.isPro && !tenant.isExpired) { %>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold bg-green-500/15 text-green-400 border border-green-500/25">
+              <i data-lucide="crown" class="w-4 h-4"></i> PRO
+            </span>
+          <% } else if (tenant.isExpired) { %>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold bg-red-500/15 text-red-400 border border-red-500/25">
+              <i data-lucide="clock" class="w-4 h-4"></i> PRO (EXPIRED)
+            </span>
+          <% } else { %>
+            <span class="inline-flex px-3 py-1 rounded-full text-sm font-bold bg-gray-700/60 text-gray-300">FREE</span>
+          <% } %>
+          <span class="text-xs text-gray-500">Status: <%= tenant.subscription_status || 'ACTIVE' %></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <div class="text-xs text-gray-500 mb-1">Mulai Berlangganan</div>
+        <div class="text-sm text-white">
+          <%= tenant.subscription_started_at ? new Date(tenant.subscription_started_at).toLocaleDateString('id-ID', { day:'2-digit', month:'long', year:'numeric' }) : '-' %>
+        </div>
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 mb-1">Berlaku Sampai</div>
+        <div class="text-sm <%= tenant.isExpired ? 'text-red-400' : (tenant.daysLeft <= 7 ? 'text-yellow-400' : 'text-white') %>">
+          <%= tenant.subscription_expires_at ? new Date(tenant.subscription_expires_at).toLocaleDateString('id-ID', { day:'2-digit', month:'long', year:'numeric' }) : '-' %>
+          <% if (tenant.daysLeft !== null && !tenant.isExpired) { %>
+            <span class="text-xs text-gray-500 ml-1">(<%= tenant.daysLeft %> hari)</span>
+          <% } else if (tenant.isExpired) { %>
+            <span class="text-xs text-red-500 ml-1">(expired)</span>
+          <% } %>
+        </div>
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 mb-1">Tenant ID</div>
+        <div class="text-sm font-mono text-gray-300">#<%= tenant.idtenant %></div>
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 mb-1">Active Users</div>
+        <div class="text-sm text-white"><%= tenant.active_users %></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+    <div class="text-xs font-semibold text-gray-400 uppercase mb-3">Aksi Cepat</div>
+
+    <% if (tenant.isPro && !tenant.isExpired) { %>
+      <!-- Extend -->
+      <form action="/developer/subscriptions/<%= tenant.idtenant %>/extend" method="POST">
+        <div class="text-xs text-gray-500 mb-2">Perpanjang PRO</div>
+        <div class="flex gap-2 mb-2">
+          <select name="extend_days" class="flex-1 px-2 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-grfyn-500">
+            <option value="30">+30 Hari</option>
+            <option value="60">+60 Hari</option>
+            <option value="90">+90 Hari</option>
+            <option value="180">+180 Hari</option>
+            <option value="365">+1 Tahun</option>
+          </select>
+          <button type="submit" class="px-3 py-2 rounded-lg bg-grfyn-500 text-white text-sm font-medium hover:bg-grfyn-600 transition-colors whitespace-nowrap">
+            Perpanjang
+          </button>
+        </div>
+      </form>
+      <div class="border-t border-gray-800 pt-3">
+        <form action="/developer/subscriptions/set" method="POST" onsubmit="return confirm('Yakin downgrade ke FREE?')">
+          <input type="hidden" name="idtenant" value="<%= tenant.idtenant %>" />
+          <input type="hidden" name="plan" value="FREE" />
+          <button type="submit" class="w-full px-3 py-2 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 text-sm font-medium hover:bg-red-500/20 transition-colors">
+            <i data-lucide="arrow-down-circle" class="w-3.5 h-3.5 inline mr-1"></i>
+            Set ke FREE
+          </button>
+        </form>
+      </div>
+    <% } else { %>
+      <!-- Activate PRO -->
+      <div class="text-xs text-gray-500 mb-2">Aktifkan PRO Manual</div>
+      <form action="/developer/subscriptions/set" method="POST">
+        <input type="hidden" name="idtenant" value="<%= tenant.idtenant %>" />
+        <input type="hidden" name="plan" value="PRO" />
+        <div class="space-y-2 mb-3">
+          <select name="duration_days" class="w-full px-2 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-grfyn-500">
+            <option value="30">30 Hari</option>
+            <option value="90">90 Hari</option>
+            <option value="180">180 Hari</option>
+            <option value="365">1 Tahun</option>
+          </select>
+          <input
+            type="date"
+            name="custom_expires_at"
+            class="w-full px-2 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-grfyn-500"
+            placeholder="Atau tanggal spesifik"
+          />
+        </div>
+        <button type="submit" class="w-full px-3 py-2 rounded-lg bg-grfyn-500 text-white text-sm font-semibold hover:bg-grfyn-600 transition-colors">
+          <i data-lucide="crown" class="w-3.5 h-3.5 inline mr-1"></i>
+          Aktifkan PRO
+        </button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<!-- Payment History -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  <div class="px-4 py-3 border-b border-gray-800">
+    <h2 class="text-sm font-semibold text-white">Riwayat Pembayaran</h2>
+  </div>
+
+  <% if (!payments || payments.length === 0) { %>
+    <div class="p-8 text-center text-gray-500 text-sm">
+      <i data-lucide="credit-card" class="w-8 h-8 mx-auto mb-2 text-gray-700"></i>
+      <p>Belum ada riwayat pembayaran</p>
+    </div>
+  <% } else { %>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-800">
+            <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Order ID</th>
+            <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Plan</th>
+            <th class="text-right px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Amount</th>
+            <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Status</th>
+            <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Dibayar</th>
+            <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Expired</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          <% payments.forEach(p => { %>
+          <tr class="hover:bg-gray-800/50 transition-colors">
+            <td class="px-4 py-3 font-mono text-xs text-gray-400"><%= p.order_id %></td>
+            <td class="px-4 py-3">
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-grfyn-500/10 text-grfyn-400"><%= p.plan_code %></span>
+            </td>
+            <td class="px-4 py-3 text-right text-white font-medium">
+              Rp <%= Number(p.amount).toLocaleString('id-ID') %>
+            </td>
+            <td class="px-4 py-3 text-center">
+              <%
+                const statusClass = {
+                  PAID: 'bg-green-500/10 text-green-400',
+                  PENDING: 'bg-yellow-500/10 text-yellow-400',
+                  FAILED: 'bg-red-500/10 text-red-400',
+                }[p.status] || 'bg-gray-500/10 text-gray-400';
+              %>
+              <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium <%= statusClass %>"><%= p.status %></span>
+            </td>
+            <td class="px-4 py-3 text-xs text-gray-400">
+              <%= p.paid_at ? new Date(p.paid_at).toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' }) : '-' %>
+            </td>
+            <td class="px-4 py-3 text-xs text-gray-400">
+              <%= p.expired_at ? new Date(p.expired_at).toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' }) : '-' %>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<script>
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+  const flash = document.getElementById('flash-success');
+  if (flash) setTimeout(() => flash.remove(), 4000);
+</script>

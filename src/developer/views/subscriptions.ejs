@@ -1,0 +1,272 @@
+<% if (locals.success) { %>
+  <div id="flash-success" class="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-sm text-green-400 flex items-center gap-2">
+    <i data-lucide="check-circle" class="w-4 h-4 shrink-0"></i>
+    <%= success %>
+  </div>
+<% } %>
+<% if (locals.error) { %>
+  <div class="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400 flex items-center gap-2">
+    <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
+    <%= error %>
+  </div>
+<% } %>
+
+<div class="mb-6 flex items-center justify-between">
+  <div>
+    <h1 class="text-xl font-bold text-white">Subscription Management</h1>
+    <p class="text-sm text-gray-500 mt-1">Kelola & aktifkan langganan PRO untuk tenant secara manual</p>
+  </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 mb-1">Total Tenant</div>
+    <div class="text-2xl font-bold text-white"><%= summary.total %></div>
+  </div>
+  <div class="bg-gray-900 border border-green-500/20 rounded-xl p-4">
+    <div class="text-xs text-green-500 mb-1">PRO Aktif</div>
+    <div class="text-2xl font-bold text-green-400"><%= summary.pro %></div>
+  </div>
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 mb-1">FREE</div>
+    <div class="text-2xl font-bold text-gray-300"><%= summary.free %></div>
+  </div>
+  <div class="bg-gray-900 border border-red-500/20 rounded-xl p-4">
+    <div class="text-xs text-red-500 mb-1">PRO Expired</div>
+    <div class="text-2xl font-bold text-red-400"><%= summary.expired %></div>
+  </div>
+</div>
+
+<!-- Quick Activate Modal Trigger -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-white">Daftar Tenant</h2>
+    <div class="flex items-center gap-2">
+      <input
+        type="text"
+        id="search-input"
+        placeholder="Cari tenant..."
+        class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-grfyn-500 w-48"
+      />
+    </div>
+  </div>
+
+  <% if (tenants.length === 0) { %>
+    <div class="p-12 text-center text-gray-500">
+      <i data-lucide="building-2" class="w-10 h-10 mx-auto mb-2 text-gray-600"></i>
+      <p>No tenants found</p>
+    </div>
+  <% } else { %>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="tenants-table">
+        <thead>
+          <tr class="border-b border-gray-800">
+            <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Tenant</th>
+            <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Plan</th>
+            <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Berlaku Sampai</th>
+            <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Users</th>
+            <th class="text-center px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Paid Count</th>
+            <th class="text-right px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Aksi</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800" id="tenants-body">
+          <% tenants.forEach(t => { %>
+          <tr class="hover:bg-gray-800/50 transition-colors tenant-row" data-name="<%= t.namatenant.toLowerCase() %>">
+            <td class="px-4 py-3">
+              <div class="text-white font-medium"><%= t.namatenant %></div>
+              <div class="text-xs text-gray-500">#<%= t.idtenant %> &middot; <%= t.hp || '-' %></div>
+            </td>
+            <td class="px-4 py-3 text-center">
+              <% if (t.isPro && !t.isExpired) { %>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/25">
+                  <i data-lucide="crown" class="w-3 h-3"></i> PRO
+                </span>
+              <% } else if (t.isExpired) { %>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/15 text-red-400 border border-red-500/25">
+                  <i data-lucide="clock" class="w-3 h-3"></i> EXPIRED
+                </span>
+              <% } else { %>
+                <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-gray-700/50 text-gray-400">FREE</span>
+              <% } %>
+            </td>
+            <td class="px-4 py-3 text-sm">
+              <% if (t.subscription_expires_at) { %>
+                <div class="<%= t.isExpired ? 'text-red-400' : (t.daysLeft <= 7 ? 'text-yellow-400' : 'text-gray-300') %>">
+                  <%= new Date(t.subscription_expires_at).toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' }) %>
+                </div>
+                <% if (!t.isExpired && t.daysLeft !== null) { %>
+                  <div class="text-xs text-gray-500"><%= t.daysLeft %> hari lagi</div>
+                <% } else if (t.isExpired) { %>
+                  <div class="text-xs text-red-500">Sudah expired</div>
+                <% } %>
+              <% } else { %>
+                <span class="text-gray-600">-</span>
+              <% } %>
+            </td>
+            <td class="px-4 py-3 text-center text-gray-300"><%= t.active_users %></td>
+            <td class="px-4 py-3 text-center">
+              <% if (t.paid_count > 0) { %>
+                <span class="text-green-400 font-medium"><%= t.paid_count %></span>
+              <% } else { %>
+                <span class="text-gray-600">0</span>
+              <% } %>
+            </td>
+            <td class="px-4 py-3 text-right">
+              <div class="flex items-center justify-end gap-2">
+                <a
+                  href="/developer/subscriptions/<%= t.idtenant %>"
+                  class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-gray-700/50 text-gray-300 hover:bg-gray-700 border border-gray-700 text-xs font-medium transition-colors"
+                >
+                  <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                  Detail
+                </a>
+                <button
+                  onclick="openSetModal(<%= t.idtenant %>, '<%= t.namatenant.replace(/'/g, "\\'") %>', '<%= t.subscription_plan || 'FREE' %>')"
+                  class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg <%= (t.isPro && !t.isExpired) ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20' : 'bg-grfyn-500/10 text-grfyn-400 hover:bg-grfyn-500/20 border border-grfyn-500/20' %> text-xs font-medium transition-colors"
+                >
+                  <i data-lucide="<%= (t.isPro && !t.isExpired) ? 'arrow-down-circle' : 'crown' %>" class="w-3.5 h-3.5"></i>
+                  <%= (t.isPro && !t.isExpired) ? 'Set FREE' : 'Set PRO' %>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<!-- Set Subscription Modal -->
+<div id="set-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md shadow-2xl">
+    <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+      <h3 class="text-base font-semibold text-white" id="modal-title">Set Subscription</h3>
+      <button onclick="closeSetModal()" class="text-gray-500 hover:text-white transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <form action="/developer/subscriptions/set" method="POST" class="p-6 space-y-4">
+      <input type="hidden" name="idtenant" id="modal-idtenant" />
+      <input type="hidden" name="plan" id="modal-plan" />
+
+      <div class="p-3 bg-gray-800 rounded-lg">
+        <div class="text-xs text-gray-500 mb-0.5">Tenant</div>
+        <div class="text-white font-medium" id="modal-tenant-name">-</div>
+      </div>
+
+      <div id="pro-options">
+        <div class="mb-3">
+          <label class="block text-xs font-medium text-gray-400 mb-2">Durasi Aktivasi</label>
+          <div class="grid grid-cols-3 gap-2 mb-3">
+            <button type="button" onclick="setDuration(30)" class="duration-btn px-3 py-2 rounded-lg text-sm border border-gray-700 text-gray-300 hover:border-grfyn-500 hover:text-white transition-colors" data-days="30">30 Hari</button>
+            <button type="button" onclick="setDuration(90)" class="duration-btn px-3 py-2 rounded-lg text-sm border border-gray-700 text-gray-300 hover:border-grfyn-500 hover:text-white transition-colors" data-days="90">90 Hari</button>
+            <button type="button" onclick="setDuration(365)" class="duration-btn px-3 py-2 rounded-lg text-sm border border-gray-700 text-gray-300 hover:border-grfyn-500 hover:text-white transition-colors" data-days="365">1 Tahun</button>
+          </div>
+          <input type="hidden" name="duration_days" id="duration-days-input" value="30" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">
+            Atau pilih tanggal kedaluwarsa manual
+          </label>
+          <input
+            type="date"
+            name="custom_expires_at"
+            id="custom-expires-input"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-grfyn-500"
+          />
+          <p class="text-xs text-gray-600 mt-1">Jika diisi, mengabaikan pilihan durasi di atas</p>
+        </div>
+      </div>
+
+      <div id="free-warning" class="hidden p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+        <div class="flex items-start gap-2 text-sm text-yellow-400">
+          <i data-lucide="alert-triangle" class="w-4 h-4 mt-0.5 shrink-0"></i>
+          <span>Tenant akan di-downgrade ke FREE. Semua fitur PRO akan dinonaktifkan.</span>
+        </div>
+      </div>
+
+      <div class="flex gap-3 pt-2">
+        <button type="button" onclick="closeSetModal()" class="flex-1 px-4 py-2.5 rounded-xl bg-gray-800 text-gray-300 hover:bg-gray-700 text-sm font-medium transition-colors">
+          Batal
+        </button>
+        <button type="submit" id="modal-submit-btn" class="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors">
+          Konfirmasi
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+
+  // Auto-hide flash success
+  const flash = document.getElementById('flash-success');
+  if (flash) setTimeout(() => flash.remove(), 4000);
+
+  // Search
+  const searchInput = document.getElementById('search-input');
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.toLowerCase();
+    document.querySelectorAll('.tenant-row').forEach(row => {
+      row.style.display = row.dataset.name.includes(q) ? '' : 'none';
+    });
+  });
+
+  // Modal
+  let selectedDays = 30;
+
+  function openSetModal(idtenant, name, currentPlan) {
+    document.getElementById('modal-idtenant').value = idtenant;
+    document.getElementById('modal-tenant-name').textContent = name;
+    document.getElementById('custom-expires-input').value = '';
+
+    const isPro = currentPlan === 'PRO';
+    const newPlan = isPro ? 'FREE' : 'PRO';
+    document.getElementById('modal-plan').value = newPlan;
+    document.getElementById('modal-title').textContent = isPro ? 'Downgrade ke FREE' : 'Aktifkan PRO';
+
+    const proOpts = document.getElementById('pro-options');
+    const freeWarn = document.getElementById('free-warning');
+    const submitBtn = document.getElementById('modal-submit-btn');
+
+    if (newPlan === 'PRO') {
+      proOpts.classList.remove('hidden');
+      freeWarn.classList.add('hidden');
+      submitBtn.className = 'flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors bg-grfyn-500 text-white hover:bg-grfyn-600';
+      submitBtn.textContent = 'Aktifkan PRO';
+      setDuration(30);
+    } else {
+      proOpts.classList.add('hidden');
+      freeWarn.classList.remove('hidden');
+      submitBtn.className = 'flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors bg-red-600 text-white hover:bg-red-700';
+      submitBtn.textContent = 'Set ke FREE';
+    }
+
+    document.getElementById('set-modal').classList.remove('hidden');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function closeSetModal() {
+    document.getElementById('set-modal').classList.add('hidden');
+  }
+
+  function setDuration(days) {
+    selectedDays = days;
+    document.getElementById('duration-days-input').value = days;
+    document.querySelectorAll('.duration-btn').forEach(btn => {
+      const active = parseInt(btn.dataset.days) === days;
+      btn.className = active
+        ? 'duration-btn px-3 py-2 rounded-lg text-sm border border-grfyn-500 text-white bg-grfyn-500/10 transition-colors'
+        : 'duration-btn px-3 py-2 rounded-lg text-sm border border-gray-700 text-gray-300 hover:border-grfyn-500 hover:text-white transition-colors';
+    });
+  }
+
+  // Click outside modal to close
+  document.getElementById('set-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeSetModal();
+  });
+</script>
