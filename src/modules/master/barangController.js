@@ -358,3 +358,31 @@ exports.checkPrice = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// POST /barang/:id/foto — Upload foto produk (multipart/form-data, field: foto)
+exports.uploadFoto = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    if (!req.file) return res.status(400).json({ message: 'File foto tidak ditemukan' });
+    const [[barang]] = await require('../../config/db').pool.query(
+      'SELECT idbarang, foto FROM barang WHERE idbarang = ? AND idtenant = ?',
+      [req.params.id, ctx.idtenant]
+    );
+    if (!barang) return res.status(404).json({ message: 'Barang tidak ditemukan' });
+
+    // Delete old file if exists
+    if (barang.foto) {
+      const oldPath = require('path').join(__dirname, '..', '..', '..', 'uploads', 'barang', barang.foto);
+      require('fs').unlink(oldPath, () => {});
+    }
+
+    await require('../../config/db').pool.query(
+      'UPDATE barang SET foto = ? WHERE idbarang = ? AND idtenant = ?',
+      [req.file.filename, req.params.id, ctx.idtenant]
+    );
+    res.json({ message: 'Foto berhasil diupload', foto: req.file.filename, url: `/uploads/barang/${req.file.filename}` });
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};

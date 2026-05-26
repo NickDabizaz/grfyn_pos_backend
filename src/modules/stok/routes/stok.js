@@ -20,4 +20,7 @@ router.put('/saldoawal/:id/batal', auth, ctrl.cancelSaldoAwal);
 // Get stok per barang (utility)
 router.get('/getstok/:idbarang', auth, ctrl.getStok);
 
+// Alert stok di bawah minimum
+router.get('/alert-stok-min', auth, ctrl.getAlertStokMin);
+
 module.exports = router;

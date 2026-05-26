@@ -104,6 +104,16 @@ async function migrate() {
 
   // Drop tables in reverse dependency order (child first, parent last)
   const tables = [
+    'webhook_log', 'webhook_config',
+    'refresh_token',
+    'audit_trail',
+    'batch_lot',
+    'lembur_karyawan', 'cuti_karyawan',
+    'anggarandtl', 'anggaran',
+    'penyusutan_aset', 'aset',
+    'poin_transaksi', 'poin_customer', 'poin_setting',
+    'hargajual_leveldtl', 'hargajual_level',
+    'diskondtl', 'diskon',
     'subscription_payment',
     'menutemplatedtl', 'usermenu', 'userlokasi',
     'closingdtl', 'closing',
@@ -392,14 +402,15 @@ async function migrate() {
   // customer
   await connection.query(`
     CREATE TABLE customer (
-      idcustomer    INT AUTO_INCREMENT PRIMARY KEY,
-      idtenant      INT NOT NULL,
-      kodecustomer  VARCHAR(20) NOT NULL,
-      namacustomer  VARCHAR(100) NOT NULL,
-      alamat        TEXT DEFAULT NULL,
-      hp            VARCHAR(20) DEFAULT NULL,
-      status        VARCHAR(20) DEFAULT 'AKTIF',
-      userentry     INT NOT NULL DEFAULT 0,
+      idcustomer       INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant         INT NOT NULL,
+      kodecustomer     VARCHAR(20) NOT NULL,
+      namacustomer     VARCHAR(100) NOT NULL,
+      alamat           TEXT DEFAULT NULL,
+      hp               VARCHAR(20) DEFAULT NULL,
+      idhargajuallevel INT DEFAULT NULL,
+      status           VARCHAR(20) DEFAULT 'AKTIF',
+      userentry        INT NOT NULL DEFAULT 0,
       FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
       UNIQUE KEY uq_customer_kode (idtenant, kodecustomer)
     ) ENGINE=InnoDB
@@ -435,6 +446,9 @@ async function migrate() {
       konversi2    INT DEFAULT 0,
       jenis        VARCHAR(30) DEFAULT 'BARANG JADI',
       stokmin      DECIMAL(15,3) DEFAULT 0,
+      foto         VARCHAR(255) DEFAULT NULL,
+      has_batch    TINYINT(1) DEFAULT 0,
+      idhargajuallevel INT DEFAULT NULL,
       status       VARCHAR(20) DEFAULT 'AKTIF',
       userentry    INT NOT NULL DEFAULT 0,
       FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
@@ -1447,8 +1461,6 @@ async function migrate() {
     ) ENGINE=InnoDB
   `);
 
-  console.log('All tables created');
-
   // produksi
   await connection.query(`
     CREATE TABLE produksi (
@@ -1487,6 +1499,351 @@ async function migrate() {
       FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
     ) ENGINE=InnoDB
   `);
+
+  // ============================================================
+  // NEW FEATURE TABLES
+  // ============================================================
+
+  // diskon
+  await connection.query(`
+    CREATE TABLE diskon (
+      iddiskon INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      kodediskon VARCHAR(20) NOT NULL,
+      namadiskon VARCHAR(100) NOT NULL,
+      jenis ENUM('PERSEN','NOMINAL','BELI_X_GRATIS_Y') NOT NULL DEFAULT 'PERSEN',
+      nilai DECIMAL(15,2) NOT NULL DEFAULT 0,
+      min_pembelian DECIMAL(15,2) DEFAULT 0,
+      min_qty DECIMAL(15,3) DEFAULT 0,
+      max_diskon DECIMAL(15,2) DEFAULT NULL,
+      nilai_x INT DEFAULT NULL,
+      nilai_y INT DEFAULT NULL,
+      tglawal DATE NOT NULL,
+      tglakhir DATE NOT NULL,
+      berlaku_semua_barang TINYINT(1) DEFAULT 1,
+      status VARCHAR(20) DEFAULT 'AKTIF',
+      userentry INT DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      UNIQUE KEY uq_diskon_kode (idtenant, kodediskon)
+    ) ENGINE=InnoDB
+  `);
+
+  // diskondtl
+  await connection.query(`
+    CREATE TABLE diskondtl (
+      iddiskondtl INT AUTO_INCREMENT PRIMARY KEY,
+      iddiskon INT NOT NULL,
+      idtenant INT NOT NULL,
+      idbarang INT NOT NULL,
+      FOREIGN KEY (iddiskon) REFERENCES diskon(iddiskon) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
+    ) ENGINE=InnoDB
+  `);
+
+  // hargajual_level
+  await connection.query(`
+    CREATE TABLE hargajual_level (
+      idhargajuallevel INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      namalevel VARCHAR(50) NOT NULL,
+      deskripsi VARCHAR(100) DEFAULT NULL,
+      urutan INT DEFAULT 0,
+      status VARCHAR(20) DEFAULT 'AKTIF',
+      userentry INT DEFAULT 0,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant)
+    ) ENGINE=InnoDB
+  `);
+
+  // hargajual_leveldtl
+  await connection.query(`
+    CREATE TABLE hargajual_leveldtl (
+      idhargajualleveldtl INT AUTO_INCREMENT PRIMARY KEY,
+      idhargajuallevel INT NOT NULL,
+      idtenant INT NOT NULL,
+      idbarang INT NOT NULL,
+      satuan VARCHAR(20) DEFAULT NULL,
+      hargajual DECIMAL(15,2) NOT NULL DEFAULT 0,
+      FOREIGN KEY (idhargajuallevel) REFERENCES hargajual_level(idhargajuallevel) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
+      UNIQUE KEY uq_hjl_barang (idhargajuallevel, idbarang)
+    ) ENGINE=InnoDB
+  `);
+
+  // poin_setting
+  await connection.query(`
+    CREATE TABLE poin_setting (
+      idtenant INT NOT NULL PRIMARY KEY,
+      nominal_per_poin DECIMAL(15,2) NOT NULL DEFAULT 10000,
+      nilai_tukar_poin DECIMAL(15,2) NOT NULL DEFAULT 1000,
+      min_poin_tukar INT NOT NULL DEFAULT 10,
+      max_poin_per_transaksi INT DEFAULT NULL,
+      status VARCHAR(20) DEFAULT 'AKTIF',
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant)
+    ) ENGINE=InnoDB
+  `);
+
+  // poin_customer
+  await connection.query(`
+    CREATE TABLE poin_customer (
+      idpoincustomer INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idcustomer INT NOT NULL,
+      total_poin INT NOT NULL DEFAULT 0,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idcustomer) REFERENCES customer(idcustomer) ON DELETE CASCADE,
+      UNIQUE KEY uq_poin_customer (idtenant, idcustomer)
+    ) ENGINE=InnoDB
+  `);
+
+  // poin_transaksi
+  await connection.query(`
+    CREATE TABLE poin_transaksi (
+      idpointegon INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idcustomer INT NOT NULL,
+      idref INT DEFAULT NULL,
+      koderef VARCHAR(30) DEFAULT NULL,
+      jenisref VARCHAR(30) DEFAULT NULL,
+      poin INT NOT NULL DEFAULT 0,
+      jenis ENUM('MASUK','KELUAR') NOT NULL,
+      tgltrans DATE NOT NULL,
+      keterangan VARCHAR(255) DEFAULT NULL,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idcustomer) REFERENCES customer(idcustomer),
+      INDEX idx_poin_customer (idtenant, idcustomer),
+      INDEX idx_poin_tgl (tgltrans)
+    ) ENGINE=InnoDB
+  `);
+
+  // audit_trail
+  await connection.query(`
+    CREATE TABLE audit_trail (
+      idaudit INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT DEFAULT NULL,
+      idlokasi INT DEFAULT NULL,
+      iduser INT DEFAULT NULL,
+      tabel VARCHAR(50) NOT NULL,
+      idref INT DEFAULT NULL,
+      aksi ENUM('CREATE','UPDATE','DELETE') NOT NULL,
+      data_lama TEXT DEFAULT NULL,
+      data_baru TEXT DEFAULT NULL,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_tabel (tabel, idref),
+      INDEX idx_audit_tenant (idtenant),
+      INDEX idx_audit_tgl (tglentry)
+    ) ENGINE=InnoDB
+  `);
+
+  // aset
+  await connection.query(`
+    CREATE TABLE aset (
+      idaset INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idlokasi INT NOT NULL,
+      kodeaset VARCHAR(20) NOT NULL,
+      namaaset VARCHAR(100) NOT NULL,
+      kategori VARCHAR(50) DEFAULT 'PERALATAN',
+      tglbeli DATE NOT NULL,
+      nilai_beli DECIMAL(15,2) NOT NULL DEFAULT 0,
+      umur_ekonomis INT NOT NULL DEFAULT 12,
+      metode_penyusutan ENUM('GARIS_LURUS','SALDO_MENURUN') NOT NULL DEFAULT 'GARIS_LURUS',
+      nilai_sisa DECIMAL(15,2) NOT NULL DEFAULT 0,
+      akumulasi_penyusutan DECIMAL(15,2) NOT NULL DEFAULT 0,
+      nilai_buku DECIMAL(15,2) NOT NULL DEFAULT 0,
+      idakun_aset INT DEFAULT NULL,
+      idakun_penyusutan INT DEFAULT NULL,
+      idakun_akumulasi INT DEFAULT NULL,
+      status VARCHAR(20) DEFAULT 'AKTIF',
+      userentry INT DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      UNIQUE KEY uq_aset_kode (idtenant, idlokasi, kodeaset)
+    ) ENGINE=InnoDB
+  `);
+
+  // penyusutan_aset
+  await connection.query(`
+    CREATE TABLE penyusutan_aset (
+      idpenyusutan INT AUTO_INCREMENT PRIMARY KEY,
+      idaset INT NOT NULL,
+      idtenant INT NOT NULL,
+      idlokasi INT NOT NULL,
+      periode VARCHAR(7) NOT NULL,
+      nilai_penyusutan DECIMAL(15,2) NOT NULL DEFAULT 0,
+      akumulasi DECIMAL(15,2) NOT NULL DEFAULT 0,
+      nilai_buku DECIMAL(15,2) NOT NULL DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idaset) REFERENCES aset(idaset) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      UNIQUE KEY uq_penyusutan_aset_periode (idaset, periode)
+    ) ENGINE=InnoDB
+  `);
+
+  // anggaran
+  await connection.query(`
+    CREATE TABLE anggaran (
+      idanggaran INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idlokasi INT NOT NULL,
+      kodeanggaran VARCHAR(20) NOT NULL,
+      namaanggaran VARCHAR(100) NOT NULL,
+      periode VARCHAR(4) NOT NULL,
+      tglawal DATE NOT NULL,
+      tglakhir DATE NOT NULL,
+      total_anggaran DECIMAL(15,2) DEFAULT 0,
+      status VARCHAR(20) DEFAULT 'DRAFT',
+      userentry INT DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      UNIQUE KEY uq_anggaran (idtenant, idlokasi, kodeanggaran)
+    ) ENGINE=InnoDB
+  `);
+
+  // anggarandtl
+  await connection.query(`
+    CREATE TABLE anggarandtl (
+      idanggarandtl INT AUTO_INCREMENT PRIMARY KEY,
+      idanggaran INT NOT NULL,
+      idtenant INT NOT NULL,
+      idakun INT NOT NULL,
+      bulan INT NOT NULL,
+      nilai_anggaran DECIMAL(15,2) NOT NULL DEFAULT 0,
+      nilai_realisasi DECIMAL(15,2) NOT NULL DEFAULT 0,
+      FOREIGN KEY (idanggaran) REFERENCES anggaran(idanggaran) ON DELETE CASCADE,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idakun) REFERENCES akun(idakun)
+    ) ENGINE=InnoDB
+  `);
+
+  // cuti_karyawan
+  await connection.query(`
+    CREATE TABLE cuti_karyawan (
+      idcuti INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idlokasi INT NOT NULL,
+      idkaryawan INT NOT NULL,
+      jeniscuti ENUM('TAHUNAN','SAKIT','IZIN','MELAHIRKAN','LAINNYA') NOT NULL DEFAULT 'TAHUNAN',
+      tglawal DATE NOT NULL,
+      tglakhir DATE NOT NULL,
+      jumlah_hari INT NOT NULL DEFAULT 1,
+      keterangan VARCHAR(255) DEFAULT NULL,
+      status VARCHAR(20) DEFAULT 'DRAFT',
+      userentry INT DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      FOREIGN KEY (idkaryawan) REFERENCES karyawan(idkaryawan)
+    ) ENGINE=InnoDB
+  `);
+
+  // lembur_karyawan
+  await connection.query(`
+    CREATE TABLE lembur_karyawan (
+      idlembur INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idlokasi INT NOT NULL,
+      idkaryawan INT NOT NULL,
+      tgllembur DATE NOT NULL,
+      jam_mulai TIME NOT NULL,
+      jam_selesai TIME NOT NULL,
+      total_jam DECIMAL(5,2) NOT NULL DEFAULT 0,
+      tarif_per_jam DECIMAL(15,2) NOT NULL DEFAULT 0,
+      total_bayar DECIMAL(15,2) NOT NULL DEFAULT 0,
+      keterangan VARCHAR(255) DEFAULT NULL,
+      status VARCHAR(20) DEFAULT 'DRAFT',
+      userentry INT DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      FOREIGN KEY (idkaryawan) REFERENCES karyawan(idkaryawan),
+      UNIQUE KEY uq_lembur (idtenant, idkaryawan, tgllembur, jam_mulai)
+    ) ENGINE=InnoDB
+  `);
+
+  // batch_lot
+  await connection.query(`
+    CREATE TABLE batch_lot (
+      idbatch INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      idbarang INT NOT NULL,
+      idlokasi INT NOT NULL,
+      nomorbatch VARCHAR(50) NOT NULL,
+      tglproduksi DATE DEFAULT NULL,
+      tglkadaluarsa DATE DEFAULT NULL,
+      qty_masuk DECIMAL(15,3) DEFAULT 0,
+      qty_keluar DECIMAL(15,3) DEFAULT 0,
+      qty_sisa DECIMAL(15,3) DEFAULT 0,
+      satuan VARCHAR(20) DEFAULT NULL,
+      idref INT DEFAULT NULL,
+      koderef VARCHAR(30) DEFAULT NULL,
+      jenisref VARCHAR(30) DEFAULT NULL,
+      status VARCHAR(20) DEFAULT 'AKTIF',
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
+      FOREIGN KEY (idbarang) REFERENCES barang(idbarang),
+      FOREIGN KEY (idlokasi) REFERENCES lokasi(idlokasi),
+      UNIQUE KEY uq_batch (idtenant, idbarang, idlokasi, nomorbatch),
+      INDEX idx_batch_kadaluarsa (tglkadaluarsa)
+    ) ENGINE=InnoDB
+  `);
+
+  // refresh_token
+  await connection.query(`
+    CREATE TABLE refresh_token (
+      idrefreshtoken INT AUTO_INCREMENT PRIMARY KEY,
+      iduser INT NOT NULL,
+      idtenant INT NOT NULL,
+      token_hash VARCHAR(64) NOT NULL,
+      expires_at DATETIME NOT NULL,
+      used TINYINT(1) DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_rt_token (token_hash),
+      INDEX idx_rt_user (iduser),
+      FOREIGN KEY (iduser) REFERENCES user(iduser) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // webhook_config
+  await connection.query(`
+    CREATE TABLE webhook_config (
+      idwebhook INT AUTO_INCREMENT PRIMARY KEY,
+      idtenant INT NOT NULL,
+      namawebhook VARCHAR(100) NOT NULL,
+      url VARCHAR(500) NOT NULL,
+      events TEXT NOT NULL,
+      secret VARCHAR(100) DEFAULT NULL,
+      status VARCHAR(20) DEFAULT 'AKTIF',
+      userentry INT DEFAULT 0,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idtenant) REFERENCES tenant(idtenant)
+    ) ENGINE=InnoDB
+  `);
+
+  // webhook_log
+  await connection.query(`
+    CREATE TABLE webhook_log (
+      idwebhooklog INT AUTO_INCREMENT PRIMARY KEY,
+      idwebhook INT NOT NULL,
+      idtenant INT NOT NULL,
+      event VARCHAR(50) NOT NULL,
+      payload TEXT DEFAULT NULL,
+      status_code INT DEFAULT NULL,
+      response TEXT DEFAULT NULL,
+      error_message VARCHAR(500) DEFAULT NULL,
+      tglentry TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (idwebhook) REFERENCES webhook_config(idwebhook) ON DELETE CASCADE,
+      INDEX idx_webhook_log_webhook (idwebhook),
+      INDEX idx_webhook_log_tgl (tglentry)
+    ) ENGINE=InnoDB
+  `);
+
+  console.log('All tables created');
 
   // ============================================================
   // SEED DATA

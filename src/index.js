@@ -51,7 +51,18 @@ const karyawanRoutes        = require('./modules/hr/routes/karyawan');
 const absensiRoutes         = require('./modules/hr/routes/absensi');
 const payrollRoutes         = require('./modules/hr/routes/payroll');
 const subscriptionRoutes    = require('./modules/subscription/routes/subscription');
+const poinRoutes            = require('./modules/master/routes/poin');
+const diskonRoutes          = require('./modules/penjualan/routes/diskon');
+const hargaLevelRoutes      = require('./modules/master/routes/hargaLevel');
+const asetRoutes            = require('./modules/aset/routes/aset');
+const anggaranRoutes        = require('./modules/keuangan/routes/anggaran');
+const cutiRoutes            = require('./modules/hr/routes/cuti');
+const lemburRoutes          = require('./modules/hr/routes/lembur');
+const batchLotRoutes        = require('./modules/stok/routes/batchLot');
+const exportLaporanRoutes   = require('./modules/laporan/routes/export');
+const webhookRoutes         = require('./modules/subscription/routes/webhook');
 const { ensureSubscriptionSchema } = require('./lib/subscription');
+require('./lib/jobqueue'); // start background job queue
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -113,6 +124,16 @@ app.use('/api/karyawan', karyawanRoutes);
 app.use('/api/absensi', absensiRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/poin', poinRoutes);
+app.use('/api/diskon', diskonRoutes);
+app.use('/api/harga-level', hargaLevelRoutes);
+app.use('/api/aset', asetRoutes);
+app.use('/api/anggaran', anggaranRoutes);
+app.use('/api/cuti', cutiRoutes);
+app.use('/api/lembur', lemburRoutes);
+app.use('/api/batch-lot', batchLotRoutes);
+app.use('/api/laporan/export', exportLaporanRoutes);
+app.use('/api/webhook', webhookRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -544,3 +544,26 @@ exports.getStok = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+
+// GET /stok/alert-stok-min — Daftar barang yang stoknya <= stokmin
+exports.getAlertStokMin = async (req, res) => {
+  try {
+    const ctx = getTenantContext();
+    const rows = await tenantQuery(
+      `SELECT b.idbarang, b.kodebarang, b.namabarang, b.satuankecil, b.stokmin,
+        COALESCE(SUM(CASE WHEN ks.jenis='M' THEN ks.jml ELSE -ks.jml END), 0) as stok_sekarang
+       FROM barang b
+       LEFT JOIN kartustok ks ON ks.idbarang = b.idbarang AND ks.idlokasi = ? AND ks.idtenant = b.idtenant
+       WHERE b.status = 'AKTIF' AND b.stokmin > 0
+       GROUP BY b.idbarang
+       HAVING stok_sekarang <= b.stokmin
+       ORDER BY stok_sekarang ASC`,
+      [ctx.idlokasi]
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error(err, { req });
+    res.status(500).json({ message: err.message });
+  }
+};
