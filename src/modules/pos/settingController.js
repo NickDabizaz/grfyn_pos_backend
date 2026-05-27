@@ -5,6 +5,7 @@
 const { pool, tenantExecute, getTenantContext } = require('../../config/db');
 const { getConfigValue, setConfigValue } = require('../../lib/confighelper');
 const logger = require('../../lib/logger');
+const { getTenantUploadUrl, removeUploadFile } = require('../../lib/uploadPaths');
 
 function upperOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -69,9 +70,14 @@ exports.updateLogo = async (req, res) => {
   try {
     const ctx = getTenantContext();
     if (!req.file) return res.status(400).json({ message: 'File tidak ditemukan' });
-    const logoPath = `/uploads/${req.file.filename}`;
+    const [[tenant]] = await pool.query(
+      'SELECT logo FROM tenant WHERE idtenant = ?',
+      [ctx.idtenant]
+    );
+    const logoPath = getTenantUploadUrl(ctx.idtenant, 'logo', req.file.filename);
     let sql = 'UPDATE tenant SET logo = ? WHERE idtenant = ?';
     await tenantExecute(sql, [logoPath, ctx.idtenant]);
+    if (tenant?.logo && tenant.logo !== logoPath) removeUploadFile(tenant.logo);
     res.json({ message: 'Logo berhasil diupdate', logo: logoPath });
   } catch (err) {
     logger.error(err, { req });

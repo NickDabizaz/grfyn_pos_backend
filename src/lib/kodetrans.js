@@ -114,19 +114,17 @@ async function generateKodeClosing(conn, idtenant, idlokasi) {
 
 // Generate kode master data (barang, customer, supplier, dll): format PREFIXNNNN (tanpa lokasi dan tanggal)
 async function generateKodeMaster(conn, prefix, idtenant, table, column, pad = 4) {
-  // Cari nilai MAX kode untuk prefix dalam tenant
-  let sql = `SELECT MAX(${column}) as maxKode FROM ${table} WHERE idtenant = ?`;
-  const [[{ maxKode }]] = await conn.query(sql,
-    [idtenant]
-  );
+  const sql = `SELECT ${column} AS kode FROM ${table} WHERE idtenant = ? AND ${column} LIKE ?`;
+  const [rows] = await conn.query(sql, [idtenant, `${prefix}%`]);
+  const pattern = new RegExp(`^${prefix}(\\d+)$`);
+  const maxNum = rows.reduce((max, row) => {
+    const match = String(row.kode || '').match(pattern);
+    if (!match) return max;
+    const number = parseInt(match[1], 10);
+    return Number.isFinite(number) ? Math.max(max, number) : max;
+  }, 0);
 
-  let num = 1;
-  if (maxKode) {
-    const numStr = maxKode.replace(`${prefix}`, ''); // Ambil bagian angka setelah prefix
-    num = parseInt(numStr) + 1;
-  }
-
-  return `${prefix}${String(num).padStart(pad, '0')}`; // Contoh: BRG0001
+  return `${prefix}${String(maxNum + 1).padStart(pad, '0')}`; // Contoh: BRG0001
 }
 
 // Generate kode perhitungan HPP: format HPP.KODELOKASI.YYYYMM.NNN

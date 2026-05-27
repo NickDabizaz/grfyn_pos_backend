@@ -162,18 +162,17 @@ async function migrate() {
   // historyprogram
   await connection.query(`
     CREATE TABLE historyprogram (
-      idhistory   INT AUTO_INCREMENT PRIMARY KEY,
-      idtenant    INT DEFAULT NULL,
-      idlokasi    INT DEFAULT NULL,
-      iduser      INT DEFAULT NULL,
-      action      VARCHAR(50) NOT NULL,
-      ref         VARCHAR(100) DEFAULT NULL,
-      detail      TEXT DEFAULT NULL,
-      ip          VARCHAR(50) DEFAULT NULL,
-      useragent   VARCHAR(255) DEFAULT NULL,
-      tglentry    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_history_tenant (idtenant),
-      INDEX idx_history_action (action),
+      idlog           INT AUTO_INCREMENT PRIMARY KEY,
+      idtrans         INT DEFAULT NULL,
+      kodetrans       VARCHAR(100) DEFAULT NULL,
+      jenistransaksi  VARCHAR(100) NOT NULL,
+      aksi            VARCHAR(50) NOT NULL,
+      namafile        VARCHAR(255) NOT NULL,
+      userentry       VARCHAR(100) DEFAULT NULL,
+      tglentry        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_history_trans (kodetrans),
+      INDEX idx_history_jenis_aksi (jenistransaksi, aksi),
+      INDEX idx_history_file (namafile),
       INDEX idx_history_tgl (tglentry)
     ) ENGINE=InnoDB
   `);
@@ -1507,7 +1506,7 @@ async function migrate() {
   // diskon
   await connection.query(`
     CREATE TABLE diskon (
-      iddiskon INT AUTO_INCREMENT PRIMARY KEY,
+      idiskon INT AUTO_INCREMENT PRIMARY KEY,
       idtenant INT NOT NULL,
       kodediskon VARCHAR(20) NOT NULL,
       namadiskon VARCHAR(100) NOT NULL,
@@ -1536,7 +1535,7 @@ async function migrate() {
       iddiskon INT NOT NULL,
       idtenant INT NOT NULL,
       idbarang INT NOT NULL,
-      FOREIGN KEY (iddiskon) REFERENCES diskon(iddiskon) ON DELETE CASCADE,
+      FOREIGN KEY (iddiskon) REFERENCES diskon(idiskon) ON DELETE CASCADE,
       FOREIGN KEY (idtenant) REFERENCES tenant(idtenant),
       FOREIGN KEY (idbarang) REFERENCES barang(idbarang)
     ) ENGINE=InnoDB
@@ -1891,6 +1890,7 @@ async function migrate() {
     [11, 3, 'master.supplier', 'Supplier', 4, null, '/master/supplier'],
     [15, 3, 'master.lokasi',   'Lokasi',   5, null, '/master/lokasi'],
     [13, 3, 'master.akun',     'Akun',     6, null, '/master/akun'],
+    [69, 3, 'master.promo',    'Promo',    7, null, '/master/promo'],
   ];
   for (const m of masterChildren) {
     await connection.query(

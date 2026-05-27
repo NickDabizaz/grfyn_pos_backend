@@ -74,6 +74,7 @@ logger.cleanOldLogs();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(logger.captureLogMiddleware());
 
 // View engine EJS untuk render laporan dan developer portal
 app.set('view engine', 'ejs');

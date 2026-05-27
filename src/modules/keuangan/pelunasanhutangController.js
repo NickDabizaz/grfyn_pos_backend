@@ -146,7 +146,13 @@ exports.getOne = async (req, res) => {
       [req.params.id, ctx.idtenant, ctx.idlokasi]
     );
     if (!rows.length) return res.status(404).json({ message: 'Pelunasan hutang tidak ditemukan' });
-    const details = await tenantQuery('SELECT * FROM pelunasanhutangdtl WHERE idpelunasan = ?', [req.params.id]);
+    const details = await tenantQuery(
+      `SELECT d.*
+       FROM pelunasanhutangdtl d
+       JOIN pelunasanhutang ph ON ph.idpelunasan = d.idpelunasan
+       WHERE d.idpelunasan = ? AND ph.idtenant = ? AND ph.idlokasi = ?`,
+      [req.params.id, ctx.idtenant, ctx.idlokasi]
+    );
     const pembayaran = await tenantQuery(
       `SELECT pb.idbayar, pb.idakun, pb.amount, a.kodeakun, a.namaakun
        FROM pelunasanhutangbayar pb

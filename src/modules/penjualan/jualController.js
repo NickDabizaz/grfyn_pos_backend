@@ -50,6 +50,17 @@ function isAutoLunasJual(jual) {
     || ['JUAL LUNAS', 'PENJUALAN LUNAS', 'PENJUALAN LANGSUNG LUNAS', 'PENJUALAN PESANAN LUNAS'].includes(jual.jenistransaksi);
 }
 
+function isLangsungLunasPayload(body = {}) {
+  return body.langsung_lunas === true
+    || body.langsung_lunas === 1
+    || body.langsung_lunas === '1'
+    || body.langsung_lunas === 'true'
+    || body.is_lunaslangsung === true
+    || body.is_lunaslangsung === 1
+    || body.is_lunaslangsung === '1'
+    || body.is_lunaslangsung === 'true';
+}
+
 async function deletePostedJual(conn, { idtenant, jual }) {
   // Hapus jurnal penjualan + jurnal pelunasan otomatis yang terkait
   const [pels] = await conn.query(
@@ -100,7 +111,7 @@ exports.create = async (req, res) => {
     }
 
     const idcustomer     = req.body.idcustomer || null;
-    const langsungLunas  = req.body.langsung_lunas === true;
+    const langsungLunas  = isLangsungLunasPayload(req.body);
     const idlokasi       = (customIdlokasi && parseInt(customIdlokasi)) ? parseInt(customIdlokasi) : null;
     const tgltrans       = req.body.tgltrans || new Date().toISOString().slice(0, 10);
     const kodejual       = (customKodejual && customKodejual.trim()) ? customKodejual.trim() : await generateKodeJual(conn, ctx.idtenant, idlokasi);
@@ -313,7 +324,7 @@ exports.update = async (req, res) => {
     const newIdlokasi    = req.body.idlokasi;
     const newIdcustomer  = req.body.idcustomer || null;
     const newTgltrans    = req.body.tgltrans;
-    const langsungLunas  = req.body.langsung_lunas === true;
+    const langsungLunas  = isLangsungLunasPayload(req.body);
     const approve        = req.body.approve === true || req.body.status === 'APPROVED';
     const newIdbpk       = req.body.idbpk || null;
     const newKodebpk     = req.body.kodebpk || null;
@@ -431,7 +442,7 @@ exports.update = async (req, res) => {
         const metodbayar    = req.body.metodbayar || 'TUNAI';
         const [pelResult] = await conn.query(
           'INSERT INTO pelunasanpiutang (idtenant, idlokasi, idcustomer, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [ctx.idtenant, idlokasi, newIdcustomer, kodepelunasan, tgltrans, grandTotal, metodbayar, `Pelunasan Langsung Edit Jual ${kodejual}`, ctx.iduser]
+          [ctx.idtenant, idlokasi, newIdcustomer, kodepelunasan, tgltrans, grandTotal, metodbayar, `Pelunasan Langsung Jual ${kodejual}`, ctx.iduser]
         );
         await conn.query('INSERT INTO pelunasanpiutangdtl (idpelunasan, kodetrans, amount) VALUES (?, ?, ?)', [pelResult.insertId, kodejual, grandTotal]);
 

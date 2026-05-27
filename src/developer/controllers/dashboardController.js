@@ -6,12 +6,22 @@ exports.index = async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
 
     const [[errorCount]] = await pool.query(
-      "SELECT COUNT(*) as cnt FROM historyprogram WHERE action = 'error' AND DATE(tglentry) = ?",
+      "SELECT COUNT(*) as cnt FROM historyprogram WHERE aksi = 'ERROR' AND DATE(tglentry) = ?",
       [today]
     );
 
     const [recentHistory] = await pool.query(
-      'SELECT * FROM historyprogram ORDER BY tglentry DESC LIMIT 10'
+      `SELECT * FROM historyprogram
+       WHERE aksi IN ('SIMPAN', 'EDIT', 'HAPUS', 'BATAL', 'APPROVE', 'BATAL APPROVE')
+          OR jenistransaksi = 'REGISTER'
+          OR jenistransaksi = 'IMPORT'
+          OR jenistransaksi LIKE 'IMPORT\\_%'
+          OR jenistransaksi = 'SUBSCRIPTION'
+          OR jenistransaksi LIKE 'SUBSCRIPTION\\_%'
+          OR jenistransaksi LIKE '%SUBSCRIPTION%'
+          OR jenistransaksi = 'BT'
+          OR jenistransaksi LIKE 'BT\\_%'
+       ORDER BY tglentry DESC LIMIT 10`
     );
 
     const [[dbStatus]] = await pool.query('SELECT 1 as ok');

@@ -26,6 +26,56 @@ async function assertPoApproved(conn, idpo, idtenant) {
   return po;
 }
 
+function raiseValidation(message, statusCode = 400) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  throw err;
+}
+
+async function validateBpbMatchesPo(conn, { po, idtenant, idsupplier, idlokasi, items }) {
+  if (Number(idsupplier) !== Number(po.idsupplier)) {
+    raiseValidation('Supplier BPB harus sama dengan supplier PO dan tidak boleh diganti');
+  }
+  if (Number(idlokasi) !== Number(po.idlokasi)) {
+    raiseValidation('Lokasi BPB harus sama dengan lokasi PO dan tidak boleh diganti');
+  }
+
+  const [poItems] = await conn.query(
+    'SELECT idpodtl, idbarang, jml FROM purchaseorderdtl WHERE idpo = ? AND idtenant = ?',
+    [po.idpo, idtenant]
+  );
+  if (items.length !== poItems.length) {
+    raiseValidation('Barang BPB harus sama dengan barang di PO; tidak boleh ditambah atau dikurangi');
+  }
+
+  const poItemByDetailId = new Map(poItems.map(item => [Number(item.idpodtl), item]));
+  const usedDetailIds = new Set();
+
+  for (const item of items) {
+    const detailId = Number(item.idpodtl);
+    const poItem = poItemByDetailId.get(detailId);
+    if (!detailId || !poItem) {
+      raiseValidation('Setiap barang BPB wajib berasal dari detail PO yang dipilih');
+    }
+    if (usedDetailIds.has(detailId)) {
+      raiseValidation('Detail PO tidak boleh dipakai lebih dari satu baris BPB');
+    }
+    usedDetailIds.add(detailId);
+
+    if (Number(item.idbarang) !== Number(poItem.idbarang)) {
+      raiseValidation('Barang BPB harus sama dengan barang di PO');
+    }
+
+    const jml = parseFloat(item.jml);
+    if (!Number.isFinite(jml) || jml <= 0) {
+      raiseValidation('Jumlah BPB harus lebih dari 0');
+    }
+    if (jml > parseFloat(poItem.jml)) {
+      raiseValidation('Jumlah BPB tidak boleh melebihi jumlah PO');
+    }
+  }
+}
+
 async function rebuildDetails(conn, { idbpb, idtenant, idpo, items }) {
   let grandtotal = 0;
   for (const item of items) {
@@ -142,7 +192,8 @@ exports.create = async (req, res) => {
     const status = shouldApprove(req) ? 'APPROVED' : 'DRAFT';
 
     await conn.beginTransaction();
-    await assertPoApproved(conn, idpo, ctx.idtenant);
+    const po = await assertPoApproved(conn, idpo, ctx.idtenant);
+    await validateBpbMatchesPo(conn, { po, idtenant: ctx.idtenant, idsupplier, idlokasi, items });
 
     const [result] = await conn.query(
       `INSERT INTO bpb (idtenant, idlokasi, kodebpb, tgltrans, idpo, idsupplier, iduser, grandtotal, catatan, status, userentry, tglentry)
@@ -193,7 +244,12 @@ exports.update = async (req, res) => {
       throw err;
     }
 
-    await assertPoApproved(conn, idpo, ctx.idtenant);
+    if (Number(idpo) !== Number(bpb.idpo)) {
+      raiseValidation('PO referensi BPB tidak boleh diganti');
+    }
+
+    const po = await assertPoApproved(conn, idpo, ctx.idtenant);
+    await validateBpbMatchesPo(conn, { po, idtenant: ctx.idtenant, idsupplier, idlokasi, items });
     await revertOldDetails(conn, { idbpb: id, idtenant: ctx.idtenant, idpo: bpb.idpo });
     await conn.query('DELETE FROM bpbdtl WHERE idbpb = ? AND idtenant = ?', [id, ctx.idtenant]);
 
@@ -281,6 +337,47 @@ exports.unapprove = async (req, res) => {
     await conn.commit();
     await logger.history('BPB_UNAPPROVE', { idtenant: ctx.idtenant, idlokasi: bpb.idlokasi, iduser: ctx.iduser, ref: bpb.kodebpb, req });
     res.json({ message: 'Approve BPB berhasil dibatalkan' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.batal = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+
+    const [[bpb]] = await conn.query('SELECT * FROM bpb WHERE idbpb = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
+    if (!bpb) {
+      const err = new Error('BPB tidak ditemukan');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (bpb.status !== 'DRAFT') {
+      const err = new Error('Hanya BPB DRAFT yang bisa dibatalkan');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await revertOldDetails(conn, { idbpb: req.params.id, idtenant: ctx.idtenant, idpo: bpb.idpo });
+    await conn.query("UPDATE bpb SET status = 'CANCELLED' WHERE idbpb = ? AND idtenant = ?", [req.params.id, ctx.idtenant]);
+
+    const [[activeBpb]] = await conn.query(
+      "SELECT idbpb FROM bpb WHERE idpo = ? AND idtenant = ? AND status != 'CANCELLED' LIMIT 1",
+      [bpb.idpo, ctx.idtenant]
+    );
+    if (!activeBpb) {
+      await conn.query("UPDATE purchaseorder SET status = 'APPROVED' WHERE idpo = ? AND idtenant = ?", [bpb.idpo, ctx.idtenant]);
+    }
+
+    await conn.commit();
+    await logger.history('BPB_BATAL', { idtenant: ctx.idtenant, idlokasi: bpb.idlokasi, iduser: ctx.iduser, ref: bpb.kodebpb, req });
+    res.json({ message: 'BPB berhasil dibatalkan' });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });

@@ -1,16 +1,13 @@
 const router = require('express').Router();
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const ctrl = require('../barangController');
 const auth = require('../../../middleware/auth');
 const { requireAccess } = require('../../../lib/access');
-
-const uploadDir = path.join(__dirname, '..', '..', '..', '..', 'uploads', 'barang');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const { ensureTenantUploadDir } = require('../../../lib/uploadPaths');
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
+  destination: (req, file, cb) => cb(null, ensureTenantUploadDir(req.user.idtenant, 'barang')),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `barang-${req.params.id}-${Date.now()}${ext}`);

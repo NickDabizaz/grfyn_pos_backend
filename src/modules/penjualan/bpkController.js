@@ -121,8 +121,7 @@ exports.getOne = async (req, res) => {
 
     // dapet in stok masing masing barang di lokasi bpk
     for (const item of items) {
-      const [[stok]] = await getStok(item.idbarang, rows[0].idlokasi, rows[0].tgltrans);
-      item.stok = stok;
+      item.stok = await getStok(item.idbarang, rows[0].idlokasi, rows[0].tgltrans);
     }
     res.json({ ...rows[0], items });
   } catch (err) {
@@ -284,6 +283,47 @@ exports.unapprove = async (req, res) => {
     await conn.commit();
     await logger.history('BPK_UNAPPROVE', { idtenant: ctx.idtenant, idlokasi: bpk.idlokasi, iduser: ctx.iduser, ref: bpk.kodebpk, req });
     res.json({ message: 'Approve BPK berhasil dibatalkan' });
+  } catch (err) {
+    await conn.rollback();
+    logger.error(err, { req });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.batal = async (req, res) => {
+  const conn = await getConnection();
+  try {
+    const ctx = getTenantContext();
+    await conn.beginTransaction();
+
+    const [[bpk]] = await conn.query('SELECT * FROM bpk WHERE idbpk = ? AND idtenant = ?', [req.params.id, ctx.idtenant]);
+    if (!bpk) {
+      const err = new Error('BPK tidak ditemukan');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (bpk.status !== 'DRAFT') {
+      const err = new Error('Hanya BPK DRAFT yang bisa dibatalkan');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await revertOldDetails(conn, { idbpk: req.params.id, idtenant: ctx.idtenant, idso: bpk.idso });
+    await conn.query("UPDATE bpk SET status = 'CANCELLED' WHERE idbpk = ? AND idtenant = ?", [req.params.id, ctx.idtenant]);
+
+    const [[activeBpk]] = await conn.query(
+      "SELECT idbpk FROM bpk WHERE idso = ? AND idtenant = ? AND status != 'CANCELLED' LIMIT 1",
+      [bpk.idso, ctx.idtenant]
+    );
+    if (!activeBpk) {
+      await conn.query("UPDATE salesorder SET status = 'APPROVED' WHERE idso = ? AND idtenant = ?", [bpk.idso, ctx.idtenant]);
+    }
+
+    await conn.commit();
+    await logger.history('BPK_BATAL', { idtenant: ctx.idtenant, idlokasi: bpk.idlokasi, iduser: ctx.iduser, ref: bpk.kodebpk, req });
+    res.json({ message: 'BPK berhasil dibatalkan' });
   } catch (err) {
     await conn.rollback();
     logger.error(err, { req });

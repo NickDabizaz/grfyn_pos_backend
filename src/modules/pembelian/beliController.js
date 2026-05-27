@@ -528,7 +528,7 @@ exports.update = async (req, res) => {
 
       const [pelResult] = await conn.query(
         'INSERT INTO pelunasanhutang (idtenant, idlokasi, idsupplier, kodepelunasan, tgltrans, total_amount, metodbayar, catatan, userentry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [ctx.idtenant, idlokasi, newIdsupplier, kodepelunasan, tgltrans, grandTotal, metodbayar, `Pelunasan Langsung Edit Beli ${kodebeli}`, ctx.iduser]
+        [ctx.idtenant, idlokasi, newIdsupplier, kodepelunasan, tgltrans, grandTotal, metodbayar, `Pelunasan Langsung Beli ${kodebeli}`, ctx.iduser]
       );
 
       await conn.query(

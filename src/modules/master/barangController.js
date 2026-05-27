@@ -5,6 +5,7 @@ const { tenantQuery, tenantExecute, getConnection, getTenantContext } = require(
 const { generateKodeMaster } = require('../../lib/kodetrans');
 const { isPakaiBahanBakuEnabled } = require('../../lib/confighelper');
 const logger = require('../../lib/logger');
+const { getTenantUploadUrl, removeUploadFile } = require('../../lib/uploadPaths');
 
 const JENIS_OPTIONS = ['BAHAN BAKU', 'BAHAN SETENGAH JADI', 'BARANG JADI'];
 
@@ -370,17 +371,21 @@ exports.uploadFoto = async (req, res) => {
     );
     if (!barang) return res.status(404).json({ message: 'Barang tidak ditemukan' });
 
-    // Delete old file if exists
+    // Delete old file if exists. Older rows may still contain only the filename.
     if (barang.foto) {
-      const oldPath = require('path').join(__dirname, '..', '..', '..', 'uploads', 'barang', barang.foto);
-      require('fs').unlink(oldPath, () => {});
+      if (String(barang.foto).includes('/')) {
+        removeUploadFile(barang.foto);
+      } else {
+        removeUploadFile(`/uploads/barang/${barang.foto}`);
+      }
     }
 
+    const fotoPath = getTenantUploadUrl(ctx.idtenant, 'barang', req.file.filename);
     await require('../../config/db').pool.query(
       'UPDATE barang SET foto = ? WHERE idbarang = ? AND idtenant = ?',
-      [req.file.filename, req.params.id, ctx.idtenant]
+      [fotoPath, req.params.id, ctx.idtenant]
     );
-    res.json({ message: 'Foto berhasil diupload', foto: req.file.filename, url: `/uploads/barang/${req.file.filename}` });
+    res.json({ message: 'Foto berhasil diupload', foto: fotoPath, url: fotoPath });
   } catch (err) {
     logger.error(err, { req });
     res.status(500).json({ message: err.message });

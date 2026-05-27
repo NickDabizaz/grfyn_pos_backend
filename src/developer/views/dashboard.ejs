@@ -82,9 +82,9 @@
     <table class="w-full text-sm">
       <thead>
         <tr class="border-b border-gray-800">
-          <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Action</th>
-          <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Tenant</th>
-          <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Ref</th>
+          <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Jenis</th>
+          <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Aksi</th>
+          <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Kode</th>
           <th class="text-left px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Time</th>
         </tr>
       </thead>
@@ -92,10 +92,10 @@
         <% recentHistory.forEach(row => { %>
         <tr class="hover:bg-gray-800/50 transition-colors">
           <td class="px-4 py-2.5 font-mono text-xs">
-            <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium <%= row.action === 'DEV_LOGIN' ? 'bg-green-500/10 text-green-400' : 'bg-gray-500/10 text-gray-400' %>"><%= row.action %></span>
+            <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-gray-500/10 text-gray-400"><%= row.jenistransaksi %></span>
           </td>
-          <td class="px-4 py-2.5 text-gray-400 font-mono text-xs"><%= row.idtenant || '-' %></td>
-          <td class="px-4 py-2.5 text-gray-300 text-xs"><%= row.ref || '-' %></td>
+          <td class="px-4 py-2.5 text-gray-400 font-mono text-xs"><%= row.aksi || '-' %></td>
+          <td class="px-4 py-2.5 text-gray-300 text-xs"><%= row.kodetrans || '-' %></td>
           <td class="px-4 py-2.5 text-gray-500 text-xs"><%= new Date(row.tglentry).toLocaleString('id-ID') %></td>
         </tr>
         <% }); %>

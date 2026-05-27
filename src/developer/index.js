@@ -19,12 +19,15 @@ const subscriptionMgmtController = require('./controllers/subscriptionMgmtContro
 const router = express.Router();
 
 router.use(session({
+  name: 'grfyn.dev.sid',
   secret: process.env.DEV_PORTAL_SECRET || 'grfyn_dev_portal_secret',
   resave: false,
   saveUninitialized: false,
   cookie: {
+    path: '/developer',
     maxAge: 60 * 60 * 1000,
     httpOnly: true,
+    sameSite: 'lax',
     secure: false
   }
 }));
@@ -51,6 +54,7 @@ router.get('/logs/error', logController.errorLog);
 router.get('/logs/error/download', logController.downloadLog);
 router.post('/logs/error/delete', logController.deleteLog);
 router.get('/logs/history', historyController.historyLog);
+router.get('/logs/history/view', historyController.viewCapture);
 
 router.get('/database', dbHealthController.index);
 router.get('/database/processlist', dbHealthController.processList);

@@ -3,6 +3,15 @@ const path = require('path');
 
 const LOG_DIR = path.join(__dirname, '..', '..', '..', 'logs');
 
+function getErrorLogPath(fileName) {
+  const safe = path.basename(String(fileName || ''));
+  if (!/^error-\d{4}-\d{2}-\d{2}\.json$/.test(safe)) return null;
+  const resolved = path.resolve(LOG_DIR, safe);
+  const base = path.resolve(LOG_DIR);
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) return null;
+  return resolved;
+}
+
 exports.errorLog = async (req, res) => {
   try {
     const { date, search, page = 1 } = req.query;
@@ -27,8 +36,9 @@ exports.errorLog = async (req, res) => {
       selectedFile = files[0];
     }
 
-    if (selectedFile && fs.existsSync(path.join(LOG_DIR, selectedFile))) {
-      const content = fs.readFileSync(path.join(LOG_DIR, selectedFile), 'utf-8');
+    const selectedPath = selectedFile ? getErrorLogPath(selectedFile) : null;
+    if (selectedPath && fs.existsSync(selectedPath)) {
+      const content = fs.readFileSync(selectedPath, 'utf-8');
       lines = content.trim().split('\n').filter(l => l.trim())
         .map(l => {
           try { return JSON.parse(l); } catch (_) { return { raw: l, level: 'unknown', ts: null, message: l }; }
@@ -86,7 +96,8 @@ exports.errorLog = async (req, res) => {
 exports.downloadLog = async (req, res) => {
   try {
     const { file } = req.query;
-    const filePath = path.join(LOG_DIR, `${file}.json`);
+    const filePath = getErrorLogPath(`error-${file}.json`);
+    if (!filePath) return res.status(400).send('File tidak valid');
     if (!fs.existsSync(filePath)) {
       return res.status(404).send('File not found');
     }
@@ -101,10 +112,10 @@ exports.deleteLog = (req, res) => {
     const { file } = req.body;
     if (!file) return res.redirect('/developer/logs/error?error=File+tidak+ditentukan');
     const safe = path.basename(file);
-    if (!safe.startsWith('error-') || !safe.endsWith('.json')) {
+    const filePath = getErrorLogPath(safe);
+    if (!filePath) {
       return res.redirect('/developer/logs/error?error=File+tidak+valid');
     }
-    const filePath = path.join(LOG_DIR, safe);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     res.redirect('/developer/logs/error?deleted=1');
   } catch (err) {

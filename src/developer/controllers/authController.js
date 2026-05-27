@@ -1,5 +1,4 @@
 const devAuth = require('../middleware/devAuth');
-const logger = require('../../lib/logger');
 
 exports.loginPage = (req, res) => {
   if (req.session && req.session.devAuthenticated) {
@@ -14,15 +13,9 @@ exports.login = async (req, res) => {
   if (devAuth.validateLogin(username, password)) {
     req.session.devAuthenticated = true;
     req.session.devLoginTime = new Date();
+    devAuth.setCookie(res, username);
 
-    await logger.history('DEV_LOGIN', {
-      iduser: 0,
-      ref: `dev_${username}`,
-      detail: { username },
-      req
-    });
-
-    return res.redirect('/developer');
+    return req.session.save(() => res.redirect('/developer'));
   }
 
   res.render('login', {
@@ -34,6 +27,7 @@ exports.login = async (req, res) => {
 };
 
 exports.logout = (req, res) => {
+  devAuth.clearCookie(res);
   req.session.destroy(() => {
     res.redirect('/developer/login');
   });

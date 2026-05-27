@@ -81,75 +81,19 @@
               </span>
             </button>
             <div id="entry-<%= idx %>" class="hidden border-t border-gray-800 bg-gray-950">
-              <div class="p-4 space-y-4 text-xs">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div>
-                    <div class="text-gray-500 mb-1">Name</div>
-                    <div class="text-gray-200 font-mono"><%= line.name || '-' %></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 mb-1">Status / Code</div>
-                    <div class="text-gray-200 font-mono"><%= line.statusCode || '-' %> <%= line.code || '' %></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 mb-1">Tenant / User</div>
-                    <div class="text-gray-200 font-mono"><%= line.idtenant || '-' %> / <%= line.iduser || '-' %></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 mb-1">Method / Path</div>
-                    <div class="text-orange-300 font-mono break-all"><%= line.method || '-' %> <%= line.path || '' %></div>
-                  </div>
+              <div class="p-4 text-xs">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <div class="text-gray-500">Full JSON</div>
+                  <button
+                    type="button"
+                    onclick="copyLogText('full-json-<%= idx %>', this)"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
+                  >
+                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                    <span>Copy</span>
+                  </button>
                 </div>
-                <% if (line.sqlMessage || line.sqlState) { %>
-                  <div>
-                    <div class="text-gray-500 mb-1">SQL</div>
-                    <pre class="p-3 rounded bg-black/40 border border-gray-800 text-red-200 overflow-x-auto font-mono"><%= [line.sqlState, line.sqlMessage].filter(Boolean).join(' - ') %></pre>
-                  </div>
-                <% } %>
-                <div>
-                  <div class="flex items-center justify-between gap-3 mb-1">
-                    <div class="text-gray-500">Stack Trace</div>
-                    <button
-                      type="button"
-                      onclick="copyLogText('stack-<%= idx %>', this)"
-                      class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
-                    >
-                      <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-                      <span>Copy</span>
-                    </button>
-                  </div>
-                  <pre id="stack-<%= idx %>" class="p-3 rounded bg-black/40 border border-gray-800 text-gray-200 overflow-x-auto whitespace-pre-wrap font-mono"><%= line.stack || 'No stack trace recorded' %></pre>
-                </div>
-                <% if (line.request) { %>
-                  <div>
-                    <div class="flex items-center justify-between gap-3 mb-1">
-                      <div class="text-gray-500">Request</div>
-                      <button
-                        type="button"
-                        onclick="copyLogText('request-<%= idx %>', this)"
-                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
-                      >
-                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-                        <span>Copy</span>
-                      </button>
-                    </div>
-                    <pre id="request-<%= idx %>" class="p-3 rounded bg-black/40 border border-gray-800 text-cyan-100 overflow-x-auto whitespace-pre-wrap font-mono"><%= JSON.stringify(line.request, null, 2) %></pre>
-                  </div>
-                <% } %>
-                <details>
-                  <summary class="cursor-pointer text-gray-400 hover:text-white">Full JSON</summary>
-                  <div class="flex justify-end mt-2">
-                    <button
-                      type="button"
-                      onclick="copyLogText('full-json-<%= idx %>', this)"
-                      class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-[11px] transition-colors"
-                    >
-                      <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-                      <span>Copy</span>
-                    </button>
-                  </div>
-                  <pre id="full-json-<%= idx %>" class="mt-2 p-3 rounded bg-black/40 border border-gray-800 text-gray-300 overflow-x-auto whitespace-pre-wrap font-mono"><%= JSON.stringify(line, null, 2) %></pre>
-                </details>
+                <pre id="full-json-<%= idx %>" class="p-3 rounded bg-black/40 border border-gray-800 text-gray-300 overflow-x-auto whitespace-pre-wrap font-mono"><%= JSON.stringify(line, null, 2) %></pre>
               </div>
             </div>
           </div>
